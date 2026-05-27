@@ -35,25 +35,41 @@ add_subdirectory(third_party/inih)
 # ─── Domain-библиотека (platform-free, тестируется на хосте) ─────────────────
 
 add_library(indicator_domain STATIC
-    src/config/config.c
     src/protocol/parser.c
     src/domain/floor.c
     src/domain/sound_map.c
     src/domain/state.c
+    src/config/config.c
 )
-target_include_directories(indicator_domain
-    PUBLIC
-        src
-        third_party/inih
-)
-target_link_libraries(indicator_domain PRIVATE inih)
-apply_warnings(indicator_domain)
+target_include_directories(indicator_domain PUBLIC src/)
 
 # ─── Host тесты ──────────────────────────────────────────────────────────────
 
 if(INDICATOR_BUILD_TESTS)
     enable_testing()
-    add_subdirectory(tests)
+ 
+    # Unity — единственный vendored файл, компилируем один раз
+    add_library(unity STATIC tests/unity/unity.c)
+    target_include_directories(unity PUBLIC tests/unity/)
+ 
+    # Список тест-файлов → отдельный executable + CTest entry
+    set(INDICATOR_TEST_SOURCES
+        test_parser
+        test_floor
+        test_sound_map
+        test_state
+        test_config
+    )
+ 
+    foreach(TEST_NAME ${INDICATOR_TEST_SOURCES})
+        add_executable(${TEST_NAME} tests/${TEST_NAME}.c)
+        target_link_libraries(${TEST_NAME} PRIVATE indicator_domain unity)
+        target_include_directories(${TEST_NAME} PRIVATE src/)
+        add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
+ 
+    
+        apply_warnings(${TEST_NAME})
+    endforeach()
 endif()
 
 # ─── Platform-зависимые таргеты (только Pi) ──────────────────────────────────

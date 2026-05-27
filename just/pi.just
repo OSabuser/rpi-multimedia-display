@@ -107,23 +107,27 @@ setup-ssh:
 fetch-sysroot:
     #!/usr/bin/env bash
     set -euo pipefail
-    mkdir -p build-env/pi-sysroot
-    echo "  📥  Syncing /opt/vc from {{_pi}}..."
-    rsync -avz --progress "{{_pi}}:/opt/vc" build-env/pi-sysroot/
-    echo "  ✅  Sysroot ready: build-env/pi-sysroot/vc/"
+    echo "  📦  Fetching /opt/vc from {{_pi}}..."
+    rsync -av --delete \
+        "pi@${PI_HOST}:/opt/vc/" \
+        "build-env/pi-sysroot/opt/vc/"
+    echo "  ✅  Sysroot ready: build-env/pi-sysroot/opt/vc/"
 
-[doc('Собрать Docker-образ с кросс-компилятором (один раз, или после изменения Dockerfile)')]
+[doc('Собрать Docker-образ с кросс-компилятором')]
 [group('setup')]
 build-image:
     #!/usr/bin/env bash
     set -euo pipefail
-    if [ ! -d "build-env/pi-sysroot/vc" ]; then
+    if [ ! -d "build-env/pi-sysroot/opt/vc" ]; then
         echo "  ❌  Sysroot not found. Run: just pi::fetch-sysroot"
         exit 1
     fi
-    echo "  🐳  Building Docker image indicator-build..."
-    docker build -t indicator-build build-env/
+    echo "  🐳  Building Docker image indicator-build (linux/amd64)..."
+    docker build \
+        -t indicator-build \
+        build-env/
     echo "  ✅  Docker image ready: indicator-build"
+
 
 [doc('Первичная настройка Pi: пакеты, ALSA, systemd units')]
 [group('setup')]
@@ -301,3 +305,24 @@ backup-image disk:
     echo "  ⚠️   Убедитесь что SD-карта вставлена и не примонтирована"
     sudo dd if="{{disk}}" bs=4m status=progress | gzip > "${OUT}"
     echo "  ✅  Image saved: ${OUT}"
+
+
+# just/pi.just — добавить recipe deploy-debug
+
+[doc('Задеплоить debug-бинарь для анализа краша')]
+[group('deploy')]
+deploy-debug:
+    rsync -avz build/pi-debug/indicator "{{_pi}}:{{PI_DIR}}/indicator-debug"
+    @echo "  ✅  Debug binary deployed"
+
+[doc('Запустить gdb с core-файлом на Pi')]
+[group('util')]
+gdb-core:
+    ssh "{{_pi}}" "cd {{PI_DIR}} && gdb indicator-debug core \
+        -batch \
+        -ex 'set print asm-demangle on' \
+        -ex 'bt full' \
+        -ex 'frame 0' \
+        -ex 'info registers' \
+        -ex 'x/4i \$$pc-8' \
+        2>&1 | head -60"

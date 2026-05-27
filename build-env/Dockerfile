@@ -1,60 +1,91 @@
 # =============================================================================
 # build-env/Dockerfile
-# Образ для кросс-компиляции под Raspberry Pi Zero 2W (ARMv7 / armhf)
-# и host unit-тестов.
-#
-# Содержит:
-#   - arm-linux-gnueabihf-gcc  ← кросс-компилятор
-#   - clang / clang-tidy / clang-format  ← host тесты + анализ
-#   - cmake / ninja
-#   - Pi sysroot (/opt/vc)  ← DispmanX, bcm_host (копируется с Pi)
-#   - libpng-dev (host)
-#
-# Сборка: just pi::build-image
 # =============================================================================
 
-FROM debian:bookworm-slim
+FROM debian:buster-slim
 
 LABEL maintainer="lift-indicator"
-LABEL description="Cross-compile + host test environment for Raspberry Pi Zero 2W"
+
+# ─── Buster EOL → архивные репозитории ───────────────────────────────────────
+
+RUN echo "deb http://archive.debian.org/debian buster main contrib non-free" > /etc/apt/sources.list && \
+    echo "deb http://archive.debian.org/debian-security buster/updates main contrib non-free" >> /etc/apt/sources.list && \
+    echo 'Acquire::Check-Valid-Until "false";' > /etc/apt/apt.conf.d/99no-check-valid
 
 # ─── Системные пакеты ────────────────────────────────────────────────────────
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    # Кросс-компилятор ARM
-    gcc-arm-linux-gnueabihf \
-    g++-arm-linux-gnueabihf \
-    binutils-arm-linux-gnueabihf \
-    # Host компилятор и инструменты
     clang \
     clang-tidy \
     clang-format \
-    # Сборка
-    cmake \
-    ninja-build \
     make \
-    # Зависимости host сборки
+    ninja-build \
     libpng-dev \
-    # Утилиты
     git \
     rsync \
     curl \
     ca-certificates \
+    xz-utils \
+    file \
     && rm -rf /var/lib/apt/lists/*
 
-# ─── just (task runner) ──────────────────────────────────────────────────────
+# ─── cmake ───────────────────────────────────────────────────────────────────
+
+ARG CMAKE_VERSION=3.28.3
+RUN set -eux; \
+    ARCH="$(uname -m)"; \
+    case "$ARCH" in \
+        x86_64)  CMAKE_ARCH="linux-x86_64"  ;; \
+        aarch64) CMAKE_ARCH="linux-aarch64" ;; \
+        *) echo "Unsupported arch: $ARCH" && exit 1 ;; \
+    esac; \
+    curl -fsSL \
+        "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-${CMAKE_ARCH}.tar.gz" \
+    | tar -xz -C /usr/local --strip-components=1
+
+# ─── zig ─────────────────────────────────────────────────────────────────────
+# Zig-тарбол: zig-linux-ARCH-VER/{zig,lib/,doc/,...}
+# Распаковываем в /opt/zig/, бинарь симлинкуем в PATH.
+# Zig ищет свою lib/ рядом с собой → держим вместе в /opt/zig/.
+
+ARG ZIG_VERSION=0.13.0
+RUN set -eux; \
+    ARCH="$(uname -m)"; \
+    case "$ARCH" in \
+        x86_64)  ZIG_ARCH="x86_64"  ;; \
+        aarch64) ZIG_ARCH="aarch64" ;; \
+        *) echo "Unsupported arch: $ARCH" && exit 1 ;; \
+    esac; \
+    mkdir -p /opt/zig && \
+    curl -fsSL \
+        "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-${ZIG_ARCH}-${ZIG_VERSION}.tar.xz" \
+    | tar -xJ -C /opt/zig --strip-components=1 && \
+    ln -s /opt/zig/zig /usr/local/bin/zig
+
+# ─── Wrapper: arm-zig-cc ─────────────────────────────────────────────────────
+# Pi Zero W: ARM1176JZF-S = arm1176jzf_s в терминологии zig/llvm.
+
+RUN printf '#!/bin/sh\nexec zig cc -target arm-linux-gnueabihf -mcpu=arm1176jzf_s "$@"\n' \
+    > /usr/local/bin/arm-zig-cc && chmod +x /usr/local/bin/arm-zig-cc
+
+# ─── just ────────────────────────────────────────────────────────────────────
 
 ARG JUST_VERSION=1.36.0
-RUN curl -LsSf "https://github.com/casey/just/releases/download/${JUST_VERSION}/just-${JUST_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
+RUN set -eux; \
+    ARCH="$(uname -m)"; \
+    case "$ARCH" in \
+        x86_64)  JUST_ARCH="x86_64"  ;; \
+        aarch64) JUST_ARCH="aarch64" ;; \
+        *) echo "Unsupported arch: $ARCH" && exit 1 ;; \
+    esac; \
+    curl -fsSL \
+        "https://github.com/casey/just/releases/download/${JUST_VERSION}/just-${JUST_VERSION}-${JUST_ARCH}-unknown-linux-musl.tar.gz" \
     | tar -xz -C /usr/local/bin just
 
-# ─── Pi sysroot (DispmanX, bcm_host, libbcm_host.so) ────────────────────────
-# Копируется с реального Pi командой: just pi::fetch-sysroot
-# Затем пересобрать образ: just pi::build-image
+# ─── Pi sysroot: /opt/vc ─────────────────────────────────────────────────────
 
-COPY pi-sysroot/vc /opt/vc
+COPY pi-sysroot/opt/vc /opt/vc
 
-# Сделать /opt/vc lib доступными линкеру при кросс-компиляции
 RUN echo "/opt/vc/lib" > /etc/ld.so.conf.d/vc.conf && ldconfig || true
 
 # ─── Рабочая директория ──────────────────────────────────────────────────────
@@ -63,8 +94,7 @@ WORKDIR /project
 
 # ─── Проверка ────────────────────────────────────────────────────────────────
 
-RUN echo "=== Toolchain versions ===" && \
-    arm-linux-gnueabihf-gcc --version && \
-    clang --version && \
-    cmake --version && \
-    just --version
+RUN echo "=== zig ===" && zig version && \
+    echo "=== arm-zig-cc ===" && arm-zig-cc --version 2>&1 | head -1 && \
+    echo "=== cmake ===" && cmake --version | head -1 && \
+    echo "=== just ===" && just --version

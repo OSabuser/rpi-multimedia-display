@@ -1,4 +1,81 @@
+/**
+ * src/domain/sound_map.h
+ *
+ * Маппинг звуковых событий (sound_t + floor_t) → последовательность WAV-файлов.
+ * Не зависит от платформы — тестируется на хосте.
+ *
+ * Правила объявления этажа (SOUND_DING):
+ *   1–20:    {N}.wav + floor.wav
+ *   21–29:   20-.wav + {ones}.wav + floor.wav
+ *   30:      30.wav + floor.wav
+ *   31–39:   30-.wav + {ones}.wav + floor.wav
+ *   40:      40.wav + floor.wav
+ *   >40:     g_triple.wav  (fallback, TODO: уточнить с Заказчиком)
+ *   П:       podval.wav + floor.wav
+ *   П1–П9:   {N}.wav + podval.wav + floor.wav
+ *   -1..-9:  minus.wav + {N}.wav + floor.wav
+ *   UNKNOWN: g_single.wav  (fallback)
+ *
+ * Файлы — имена без пути (аудиоплеер добавит sounds_dir из конфига).
+ */
+
 #pragma once
-#include "../protocol/types.h"
-typedef struct { const char *path; int volume_percent; int valid; } sound_entry_t;
-sound_entry_t sound_map_resolve(sound_t sound, int floor, int has_music);
+
+#include "protocol/types.h"
+#include "domain/floor.h"
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Константы
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** Максимальное число файлов в одной последовательности */
+#define AUDIO_SEQ_MAX_FILES  4
+
+/** Максимальная длина имени файла (без пути), включая '\0' */
+#define AUDIO_FILENAME_MAX   32
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * audio_sequence_t — последовательность для воспроизведения
+ * ──────────────────────────────────────────────────────────────────────────── */
+typedef struct {
+    /** Имена файлов в порядке воспроизведения (без пути, с расширением .wav) */
+    char files[AUDIO_SEQ_MAX_FILES][AUDIO_FILENAME_MAX];
+
+    /** Число файлов в последовательности */
+    int count;
+
+    /** 0 = ничего не воспроизводить (SOUND_NONE или неизвестный код) */
+    int valid;
+
+    /**
+     * 1 = после воспроизведения последовательности запустить фоновую музыку.
+     * Выбор конкретного mus*.wav — ответственность аудиоплеера (shuffle).
+     */
+    int needs_music;
+} audio_sequence_t;
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * API
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * sound_map_resolve — сформировать аудио-последовательность для события.
+ *
+ * @param sound  звуковое событие из распарсенного фрейма
+ * @param floor  текущий этаж (декодированный через floor_decode)
+ *               Используется только для SOUND_DING.
+ * @param out    [out] заполненная структура
+ *
+ * Чистая функция без побочных эффектов.
+ */
+void sound_map_resolve(sound_t sound, floor_t floor, audio_sequence_t *out);
+
+/**
+ * sound_map_volume_percent — вернуть громкость для данного события.
+ *
+ * @param sound          тип события
+ * @param sound_vol_pct  громкость звуковых событий (из конфига, 0–100)
+ * @return  0 для SOUND_NONE, sound_vol_pct для всех остальных событий.
+ *          Громкость музыки управляется аудиоплеером отдельно.
+ */
+int sound_map_volume_percent(sound_t sound, int sound_vol_pct);

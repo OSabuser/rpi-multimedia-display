@@ -53,15 +53,19 @@
 **Симптом:** `just pi::deploy` падал с `Binaries not found`. На хосте `ls build/` — пусто, хотя внутри контейнера `build/pi/indicator` существовал.
 
 **Причина:** в `.devcontainer/devcontainer.json` была строка:
+
 ```json
 "source=indicator-build-cache,target=/project/build,type=volume"
 ```
+
 `type=volume` — изолированный Docker volume, недоступный с хоста.
 
 **Решение:** заменить на bind mount:
+
 ```json
 "source=${localWorkspaceFolder}/build,target=/project/build,type=bind,consistency=delegated"
 ```
+
 Удалить старый volume: `docker volume rm indicator-build-cache`.  
 Пересоздать контейнер: `Dev Containers: Rebuild Container Without Cache`.
 
@@ -74,6 +78,7 @@
 **Причина:** VSCode закэшировал старый `devcontainer.json` и применял `indicator-build-cache` volume одновременно с новым bind mount.
 
 **Решение:**
+
 ```bash
 docker ps -aq --filter "label=devcontainer.local_folder=${PWD}" | xargs docker rm -f
 docker volume rm indicator-build-cache
@@ -90,9 +95,11 @@ mkdir -p build
 **Причина:** `indicator` объявлен в корневом CMakeLists.txt и попадает в `build/pi/` напрямую. `media_ingest` объявлен в `add_subdirectory(src_media_ingest)` и попадает в соответствующую поддиректорию.
 
 **Решение:** добавить в `CMakeLists.txt` сразу после `project(...)`:
+
 ```cmake
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 ```
+
 Теперь все исполняемые файлы плоско в `build/pi/`.
 
 ---
@@ -102,6 +109,7 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 **Симптом:** `just pi::deploy` завершался с `rsync error: code 23` при синхронизации systemd-юнитов.
 
 **Решение:** создана директория `deploy/` с файлами:
+
 - `indicator.service`
 - `media-ingest.service`
 - `indicator.target`
@@ -115,13 +123,15 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 **Причина:** `ship` вызывался из devcontainer, где нет `ssh`/`rsync` для работы с Pi.
 
 **Правило зафиксировано:**
-```
+
+```bash
 Контейнер:  just build::*   (компиляция, тесты)
 Хост:       just pi::*      (деплой, SSH, управление сервисами)
 just ship   запускается ТОЛЬКО с хоста
 ```
 
 **Рекомендуемый `ship` для хоста** (добавить в корневой `justfile`):
+
 ```just
 ship:
     #!/usr/bin/env bash
@@ -142,6 +152,7 @@ ship:
 **Симптом:** `apt update` падает на чистой Pi с ошибками 404.
 
 **Решение:** добавить в начало `scripts/setup_pi.sh`:
+
 ```bash
 fix_buster_apt_sources() {
     sudo tee /etc/apt/sources.list > /dev/null <<'EOF'
@@ -163,7 +174,7 @@ sudo apt-get update
 
 ### 1.3 Итоговое состояние окружения
 
-```
+```text
 Хост (macOS)
 ├── just, docker, ssh, rsync — установлены
 ├── build-env/pi-sysroot/vc/ — скопирован с Pi
@@ -226,18 +237,22 @@ Raspberry Pi Zero 2W (indicator-01.local)
 #### В-01 — Формат UART-фрейма: синтаксис токенов
 
 Из MASTER_PLAN известен формат:
-```
+
+```bash
 #STM:<X><val>:<X><val>:<X><val>:<X><val>:<X><val>:E#\r\n
 ```
 
 **Вопрос:** `<X>` — это литеральная буква-префикс (например `L`, `R`, `D`) или просто разделитель?
 
 Т.е. реальный фрейм выглядит как вариант A:
-```
+
+```bash
 #STM:L5:R3:D1:S1:M0:E#
 ```
+
 или как вариант B:
-```
+
+```bash
 #STM:5:3:1:1:0:E#
 ```
 
@@ -248,13 +263,15 @@ Raspberry Pi Zero 2W (indicator-01.local)
 #### В-02 — Sound=4 (Closing) и Sound=5 (Opening)
 
 В MASTER_PLAN указано:
-```
+
+```bash
 Токен 5: sound — 0=None, 1=Ding, 2=Up, 3=Down, 4=Closing, 5=Opening, 6=Overload
 ```
 
 Но в текущем enum'е только 4 звука (None/Ding/Up/Down/Overload).
 
 **Вопросы:**
+
 - Closing и Opening используются в реальной прошивке STM32?
 - Есть ли для них WAV-файлы? (в `sounds/` они не просматриваются явно)
 - Нужно ли их добавить в `sound_t` или это устаревшие значения?
@@ -264,6 +281,7 @@ Raspberry Pi Zero 2W (indicator-01.local)
 #### В-03 — Частота и режим отправки фреймов от STM32
 
 **Вопрос:** STM32 отправляет фреймы:
+
 - **постоянно** с фиксированной частотой (например, 10 Гц) — тогда нужна фильтрация дублей в `state_apply_frame()`
 - **только при изменении состояния** — тогда каждый фрейм значим
 
@@ -274,6 +292,7 @@ Raspberry Pi Zero 2W (indicator-01.local)
 #### В-04 — Звуковая карта: edge-triggered или level?
 
 **Вопрос:** если два последовательных фрейма содержат `sound=DING` — звук должен сыграть:
+
 - **один раз** (sound — это уровень, не импульс)
 - **дважды** (каждый фрейм с ненулевым звуком — триггер)
 
@@ -284,7 +303,8 @@ Raspberry Pi Zero 2W (indicator-01.local)
 #### В-05 — Маппинг звуков: какие WAV-файлы к каким событиям?
 
 Из `sounds/` видна структура:
-```
+
+```bash
 1.wav … 20.wav, 30.wav, 40.wav   ← предположительно: объявление этажей
 20-.wav, 30-.wav                  ← минусовые этажи?
 floor.wav, podval.wav, minus.wav  ← составные объявления?
@@ -293,6 +313,7 @@ mus1.wav … mus7.wav               ← фоновая музыка
 ```
 
 **Вопросы:**
+
 - `SOUND_DING` для этажа 5 → `5.wav`? Для этажа 25 → `floor.wav` + `20.wav` + `5.wav`?
 - `has_music` в `sound_map_resolve()` — когда флаг поднят, ding не играет?
 - Когда именно запускается фоновая музыка (`mus*.wav`)?
@@ -340,6 +361,7 @@ typedef struct {
 ```
 
 **Вопросы:**
+
 - Нужно ли отдельное событие `first_frame` (инициализация после старта)?
 - `load_percent` — это поле в фрейме или вычисляется из других данных?
 - Есть ли события которые нужно генерировать **всегда** при первом фрейме независимо от изменений (например, показать background и weight при старте)?

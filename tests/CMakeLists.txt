@@ -17,8 +17,8 @@ endfunction()
 # ─── Тесты ───────────────────────────────────────────────────────────────────
 
 # Добавляются по мере написания:
-# add_indicator_test(test_parser    test_parser.c)
-# add_indicator_test(test_floor     test_floor.c)
-# add_indicator_test(test_state     test_state.c)
-# add_indicator_test(test_sound_map test_sound_map.c)
-# add_indicator_test(test_config    test_config.c)
+add_indicator_test(test_parser    test_parser.c)
+add_indicator_test(test_floor     test_floor.c)
+add_indicator_test(test_state     test_state.c)
+add_indicator_test(test_sound_map test_sound_map.c)
+add_indicator_test(test_config    test_config.c)

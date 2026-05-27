@@ -1,0 +1,4 @@
+[submodule "third_party/config_toolset"]
+	path = third_party/config_toolset
+	url = https://gitlab.machunit.com/sbc_displays/config_toolset
+	branch = rpi-nku

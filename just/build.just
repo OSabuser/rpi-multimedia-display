@@ -46,7 +46,7 @@ test-verbose: _configure-host
 [private]
 _configure-pi:
     cmake -B "{{BUILD_DIR}}/pi" \
-        -DCMAKE_TOOLCHAIN_FILE=cmake/Toolchain-RPiZero2W.cmake \
+        -DCMAKE_TOOLCHAIN_FILE=cmake/Toolchain-RPiZeroW.cmake \
         -DCMAKE_BUILD_TYPE=Release \
         -DINDICATOR_PLATFORM_DISPMANX=ON \
         -DINDICATOR_BUILD_TESTS=OFF \
@@ -68,6 +68,20 @@ pi-indicator: _configure-pi
 pi-ingest: _configure-pi
     cmake --build "{{BUILD_DIR}}/pi" --target media_ingest --parallel
 
+[doc('Кросс-компиляция для Pi с debug-символами')]
+[group('build')]
+pi-debug:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cmake -B "build/pi-debug" \
+        -DCMAKE_TOOLCHAIN_FILE=cmake/Toolchain-RPiZeroW.cmake \
+        -DCMAKE_BUILD_TYPE=Debug \
+        -DCMAKE_C_FLAGS="-g3 -O0 -fno-omit-frame-pointer" \
+        -DINDICATOR_PLATFORM_DISPMANX=ON \
+        -DINDICATOR_BUILD_TESTS=OFF \
+        -DINDICATOR_BUILD_INGEST=OFF
+    cmake --build "build/pi-debug" --parallel
+    echo "  ✅  Debug build: build/pi-debug/indicator"
 # =============================================================================
 # ГРУППА: quality — форматирование и статический анализ
 # =============================================================================
