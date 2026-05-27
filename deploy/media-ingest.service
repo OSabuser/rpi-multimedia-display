@@ -1,0 +1,16 @@
+[Unit]
+Description=Media Ingest Daemon (USB video replacement)
+After=local-fs.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/indicator
+ExecStart=/home/pi/indicator/media_ingest --config=/home/pi/indicator/configs/device/pizero.ini
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=indicator.target

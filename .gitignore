@@ -1,52 +1,29 @@
-# Prerequisites
-*.d
+# Сборочные артефакты
+build/
 
-# Object files
-*.o
-*.ko
-*.obj
-*.elf
+# Конфиг с реальными данными (хосты, пароли)
+.env
 
-# Linker output
-*.ilk
-*.map
-*.exp
+# Pi sysroot (копируется с Pi, не хранится в git)
+build-env/pi-sysroot/
 
-# Precompiled Headers
-*.gch
-*.pch
+# Образы SD-карт
+*.img
+*.img.gz
 
-# Libraries
-*.lib
-*.a
-*.la
-*.lo
+# macOS
+.DS_Store
+**/.DS_Store
 
-# Shared objects (inc. Windows DLLs)
-*.dll
-*.so
-*.so.*
-*.dylib
+# VSCode (личные настройки)
+.vscode/settings.json
+.vscode/launch.json
 
-# Executables
-*.exe
-*.out
-*.app
-*.i*86
-*.x86_64
-*.hex
+# CLion
+.idea/
 
-# Debug files
-*.dSYM/
-*.su
-*.idb
-*.pdb
-
-# Kernel Module Compile Results
-*.mod*
-*.cmd
-.tmp_versions/
-modules.order
-Module.symvers
-Mkfile.old
-dkms.conf
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json

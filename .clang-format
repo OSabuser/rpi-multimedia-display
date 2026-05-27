@@ -1,0 +1,15 @@
+---
+Language:        C
+BasedOnStyle:    LLVM
+IndentWidth:     4
+ColumnLimit:     100
+BreakBeforeBraces: Allman
+AllowShortFunctionsOnASingleLine: None
+AllowShortIfStatementsOnASingleLine: Never
+SortIncludes:    true
+SpaceBeforeParens: ControlStatements
+PointerAlignment: Right
+AlignConsecutiveAssignments: true
+AlignConsecutiveDeclarations: false
+AlignTrailingComments: true
+MaxEmptyLinesToKeep: 1

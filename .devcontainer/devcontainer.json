@@ -1,0 +1,68 @@
+{
+    "name": "Lift Indicator — Build Environment",
+    "build": {
+        "context": "../build-env",
+        "dockerfile": "../build-env/Dockerfile"
+    },
+    "workspaceMount": "source=${localWorkspaceFolder},target=/project,type=bind",
+    "workspaceFolder": "/project",
+    "mounts": [
+        // Кэш CMake между пересборками контейнера
+        "source=${localWorkspaceFolder}/build,target=/project/build,type=bind,consistency=delegated"
+    ],
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "llvm-vs-code-extensions.vscode-clangd",
+                "xaver.clang-format",
+                "ms-vscode.cmake-tools",
+                "skellock.just",
+                "actboy168.tasks",
+                "bierner.markdown-preview-github-styles",
+                "cheshirekow.cmake-format",
+                "codeium.codeium",
+                "cschlosser.doxdocgen",
+                "dan-c-underwood.arm",
+                "davidanson.vscode-markdownlint",
+                "gruntfuggly.todo-tree",
+                "ms-vscode.cmake-tools",
+                "llvm-vs-code-extensions.vscode-clangd",
+                "mcu-debug.debug-tracker-vscode",
+                "mcu-debug.memory-view",
+                "mcu-debug.peripheral-viewer",
+                "marus25.cortex-debug",
+                "brobeson.ctest-lab",
+                "mcu-debug.rtos-views",
+                "ms-vscode.hexeditor",
+                "nefrob.vscode-just-syntax",
+                "rioj7.command-variable",
+                "trond-snekvik.gnu-mapfiles",
+                "usernamehw.errorlens",
+                "wayou.vscode-todo-highlight",
+                "xaver.clang-format",
+                "yzhang.markdown-all-in-one",
+                "zixuanwang.linkerscript"
+            ],
+            "settings": {
+                "cmake.buildDirectory": "${workspaceFolder}/build/host",
+                "cmake.configureArgs": [
+                    "-DINDICATOR_PLATFORM_DISPMANX=OFF",
+                    "-DINDICATOR_BUILD_TESTS=ON",
+                    "-DINDICATOR_ENABLE_ASAN=ON"
+                ],
+                "C_Cpp.intelliSenseEngine": "disabled",
+                "clangd.arguments": [
+                    "--compile-commands-dir=${workspaceFolder}/build/host",
+                    "--clang-tidy",
+                    "--header-insertion=never"
+                ],
+                "editor.formatOnSave": true,
+                "editor.defaultFormatter": "xaver.clang-format",
+                "[c]": {
+                    "editor.defaultFormatter": "xaver.clang-format"
+                }
+            }
+        }
+    },
+    "postCreateCommand": "echo '✅ Devcontainer ready. Run: just build::test'"
+}

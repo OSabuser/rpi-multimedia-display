@@ -1,0 +1,17 @@
+[Unit]
+Description=Lift Indicator Daemon
+After=network.target sound.target
+Wants=sound.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/indicator
+ExecStart=/home/pi/indicator/indicator --config=/home/pi/indicator/configs/device/pizero.ini
+Restart=always
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=indicator.target
