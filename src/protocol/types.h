@@ -113,7 +113,7 @@ typedef enum
     MODE_DISPATCH_CALL   = 100, /* M_DISPATCH_CALL    — вызов диспетчера      */
     MODE_DISPATCH_ANSWER = 101, /* M_DISPATCH_ANSWER  — ответ диспетчера      */
     MODE_CONN_LOST       = 255  /* M_CONN_LOST        — потеря связи          */
-} mode_t;
+} inndicator_mode_t;
 
 /**
  * mode_is_valid — проверить допустимость числового значения поля M.
@@ -133,5 +133,5 @@ typedef struct
     char_code_t right_char;
     arrow_t arrow;
     sound_t sound;
-    mode_t mode;
+    inndicator_mode_t mode;
 } parsed_frame_t;

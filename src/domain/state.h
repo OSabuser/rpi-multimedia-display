@@ -22,7 +22,7 @@ typedef struct
     char_code_t left_char;  /* текущий левый символ          */
     char_code_t right_char; /* текущий правый символ         */
     arrow_t arrow;          /* текущее направление           */
-    mode_t mode;            /* текущий режим                 */
+    inndicator_mode_t mode; /* текущий режим                 */
     int initialized;        /* 0 = ещё не получали ни одного фрейма */
 } indicator_state_t;
 

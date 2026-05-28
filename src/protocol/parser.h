@@ -33,7 +33,7 @@
 typedef struct
 {
     uint8_t opcode;
-    uint8_t data[MU_DATA_MAX + 1u]; /* +1: null-терминатор для строковых операций */
+    uint8_t data[MU_DATA_MAX + 1U]; /* +1: null-терминатор для строковых операций */
     uint8_t data_len;
 } mu_frame_t;
 

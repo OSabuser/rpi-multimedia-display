@@ -15,7 +15,8 @@ void tearDown(void)
 }
 
 /* ── Вспомогательная: собрать parsed_frame_t ─────────────────────────────── */
-static parsed_frame_t make_frame(char_code_t l, char_code_t r, arrow_t a, sound_t s, mode_t m)
+static parsed_frame_t make_frame(char_code_t l, char_code_t r, arrow_t a, sound_t s,
+                                 inndicator_mode_t m)
 {
     parsed_frame_t f;
     f.left_char  = l;

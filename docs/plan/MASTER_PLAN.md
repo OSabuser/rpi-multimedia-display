@@ -1,8 +1,9 @@
-# Lift Indicator — Финальный план
+# Lift Indicator — Мастер-план
 
-
-> **Статус:** согласован, готов к реализации
+> **Статус:** Фазы 0–1 закрыты. Фаза 2 в работе.
 > **Стек:** C11 · DispmanX · omxplayer · ALSA · systemd · CMake · Docker · just
+> **Компилятор:** `zig cc` (`arm-zig-cc` wrapper) — ARMv6, arm1176jzf_s, hard-float
+> **Устройство:** Raspberry Pi Zero W Rev 1.1 · ARM1176JZF-S · ARMv6ZK · Debian Buster
 
 ---
 
@@ -11,8 +12,9 @@
 | Тема | Решение | Обоснование |
 |---|---|---|
 | ОС | Raspbian **Buster Lite** (CLI, без X11) | DispmanX и omxplayer работают без GUI; экономия ~100 MB RAM и ~20 с загрузки |
-| Автозапуск | **systemd units** | Заменяет LXDE autostart; supervision, логи в journald бесплатно |
-| Рендеринг | **DispmanX** (сохраняем) | Единственный вариант с zero-overhead overlay поверх omxplayer на этом железе |
+| Железо | **Raspberry Pi Zero W** (ARM1176JZF-S, ARMv6ZK) | Уточнено в Фазе 1 — не 2W, а первый Zero W |
+| Автозапуск | **systemd units** | Supervision, логи в journald, restart policy |
+| Рендеринг | **DispmanX** (сохраняем) | Zero-overhead overlay поверх omxplayer на этом железе |
 | Видеоплеер | **omxplayer** (сохраняем) | OpenMAX IL, минимальная нагрузка на CPU; заменить только при смене ОС |
 | Аудио backend | **ALSA softvol + aplay** | MAX98357 не имеет HW volume в ALSA; softvol в asound.conf — легче PulseAudio |
 | Аудио из кода | `posix_spawn("aplay")` в отдельном pthread | Нет shell overhead; latency ~30 ms вместо ~150 ms с `system()` |
@@ -21,22 +23,20 @@
 | Рендеринг цифр | **PNG сейчас**, font-renderer — Фаза 8 | Все PNG одного размера → changeSourceImageLayer без мигания |
 | BACK.png | RGBA PNG поверх видео, путь в конфиге | Статична сейчас, легко сменить в будущем |
 | group_number | Только конфиг MCU | Не используется в логике индикатора |
-| Task runner | **just** (в стиле tft_manufacture_test) | `mod build` = devcontainer, `mod pi` = хост |
-| Кросс-компиляция | **Docker** с Pi sysroot | Единый образ для macOS / Linux / Windows / CI |
+| Task runner | **just** (mod build / mod pi) | `mod build` = devcontainer, `mod pi` = хост |
+| Кросс-компилятор | **zig cc** (`arm-zig-cc` wrapper) | `arm-linux-gnueabihf-gcc` из Bookworm содержит crt*.o под glibc 2.34+ — segfault на Buster; zig компилирует crt точно под arm1176jzf_s |
+| Docker base | **Ubuntu 22.04 + LLVM 17 + zig 0.13.0** | Debian Buster в Docker — проблемы с arm64 (Rosetta); Ubuntu Jammy + official LLVM repo решает всё |
 | Деплой | **Base image + rsync** | Flash один раз, обновление приложения через rsync |
 | Тесты | **Unity** (vendored, MIT) | Один .c/.h файл, компилируется везде |
 | Код Andrew Duncan | **Переносим без изменений** в `platform/dispmanx/layers/` | MIT, корректный, не трогаем |
-| inih | **Переносим без изменений** в `third_party/inih/` | MIT, корректный |
+| Конфиг | **`nku_scheme.toml`** (TOML) | `pizero.ini` — legacy, не используется; `config_utility` и `rpi_menu` работают с TOML |
+| inih | **Не используется** | Конфиг — TOML, свой парсер; inih зарезервирован, не подключён |
 
 ---
 
 ## 2. Архитектура системы
 
-```bash
-Password: 150344@!
-Hostname: indicator-01
-ssh -i /Users/von_akimow/.ssh/id_ed25519 'pi@indicator-01.local'
-```
+> SSH: `ssh -i ~/.ssh/id_ed25519 pi@indicator-01.local`
 
 ### 2.1 Процессная модель
 
@@ -72,7 +72,8 @@ Z = 5   NOTIFICATION                  баннер USB-статуса
 
 ```
 poll()
-  ├── uart_fd     → сборка фрейма → parse → state_apply_frame()
+  ├── uart_fd     → сборка бинарного фрейма → CRC16 → parse_payload()
+  │                  → state_apply_frame()
   │                  → renderer_show_sprite_*()
   │                  → audio_player_play()
   │
@@ -101,7 +102,7 @@ NOTIFICATION                     →  fast_update = false
 ### 2.5 Аудио — приоритеты
 
 ```
-AUDIO_PRIO_CRITICAL = 0   ←  overload (высший)
+AUDIO_PRIO_CRITICAL = 0   ←  overload / fire alarm (высший)
 AUDIO_PRIO_FLOOR    = 1   ←  анонс этажа (ding + "этаж N")
 AUDIO_PRIO_MOVEMENT = 2   ←  up / down (+ музыка)
 AUDIO_PRIO_MUSIC    = 3   ←  только трек (низший)
@@ -118,19 +119,19 @@ AUDIO_PRIO_MUSIC    = 3   ←  только трек (низший)
 
 | Модуль | Файл | Ответственность |
 |---|---|---|
-| Config | `src/config/config.c/.h` | Парсинг pizero.ini, дефолты, валидация |
-| Protocol types | `src/protocol/types.h` | Enum'ы: direction_t, mode_t, sound_t, parsed_frame_t |
-| Protocol parser | `src/protocol/parser.c/.h` | `protocol_parse()` — чистая функция, без malloc |
+| Config | `src/config/config.c/.h` | Парсинг nku_scheme.toml, дефолты, валидация |
+| Protocol types | `src/protocol/types.h` | Enum'ы: `arrows_state_t`, `el_mode_t`, `s_code_t`, `parsed_payload_t` |
+| Protocol parser | `src/protocol/parser.c/.h` | `protocol_parse_frame()` + `protocol_parse_payload()`, CRC-16, без malloc |
 | Floor codec | `src/domain/floor.c/.h` | Коды символов → номер этажа |
-| Sound map | `src/domain/sound_map.c/.h` | sound_t + floor → audio_sequence_t |
-| State machine | `src/domain/state.c/.h` | Текущее/предыдущее состояние, diff → события |
+| Sound map | `src/domain/sound_map.c/.h` | `sound_map_resolve()`, `sound_map_volume_percent()` |
+| State machine | `src/domain/state.c/.h` | `state_apply_frame()` → `state_update_result_t` |
 | Renderer interface | `src/renderer/renderer.h` | Только API, без bcm_host.h |
 
 ### Только Pi
 
 | Модуль | Файл | Ответственность |
 |---|---|---|
-| UART transport | `src/transport/uart.c/.h` | termios, сборка фреймов, frame_ready_cb |
+| UART transport | `src/transport/uart.c/.h` | termios, сборка бинарных фреймов, `frame_ready_cb_t` |
 | Audio player | `src/audio/audio.c/.h` | pthread, приоритетная очередь, posix_spawn aplay |
 | Video player | `src/player/video_player.c/.h` | posix_spawn omxplayer, SIGCHLD watchdog |
 | Media IPC | `src/media/media_ipc.c/.h` | Чтение статуса из FIFO |
@@ -156,7 +157,7 @@ AUDIO_PRIO_MUSIC    = 3   ←  только трек (низший)
 lift-indicator/
 │
 ├── justfile                         ← корневой оркестратор (mod build, pi, ci)
-├── bootstrap.sh                     ← уровень 0: uv → just → just pi::bootstrap
+├── bootstrap.sh                     ← уровень 0: just + SSH ключ + sysroot + Docker
 ├── .env.example                     ← шаблон (PI_HOST, PI_USER, PI_DIR, BUILD_DIR)
 ├── .gitignore
 ├── .clang-format
@@ -167,7 +168,7 @@ lift-indicator/
 │   └── ci.just                      ← CI pipeline
 │
 ├── cmake/
-│   ├── Toolchain-RPiZero2W.cmake    ← arm-linux-gnueabihf-gcc + /opt/vc
+│   ├── Toolchain-RPiZeroW.cmake     ← arm-zig-cc + /opt/vc (ARMv6, arm1176jzf_s)
 │   ├── Warnings.cmake               ← apply_warnings(target)
 │   └── Sanitizers.cmake             ← ASan / UBSan
 │
@@ -202,11 +203,6 @@ lift-indicator/
 │           ├── loadpng.h / loadpng.c
 │           └── element_change.h
 │
-├── third_party/
-│   └── inih/
-│       ├── CMakeLists.txt
-│       ├── ini.h / ini.c            ← MIT, без изменений
-│
 ├── tests/
 │   ├── CMakeLists.txt
 │   ├── unity/           unity.h / unity.c   (MIT, vendored)
@@ -217,9 +213,9 @@ lift-indicator/
 │   └── test_config.c
 │
 ├── build-env/
-│   ├── Dockerfile                   ← arm-gcc + clang + cmake + /opt/vc
+│   ├── Dockerfile                   ← Ubuntu 22.04 + LLVM 17 + zig 0.13.0 + /opt/vc
 │   └── pi-sysroot/                  ← .gitignore; копируется: just pi::fetch-sysroot
-│       └── vc/
+│       └── opt/vc/
 │
 ├── .devcontainer/
 │   └── devcontainer.json
@@ -236,9 +232,9 @@ lift-indicator/
 │   └── smoke_test.sh                ← проверка после деплоя
 │
 └── docs/
-    ├── DEV_ARCH.md                  ← этот документ (рабочее окружение)
-    ├── ARCHITECTURE.md              ← архитектура приложения
-    └── UART_PROTOCOL.md             ← протокол STM32 → Pi
+    ├── DEV_ARCH.md                  ← рабочее окружение (актуально)
+    ├── ARCHITECTURE.md              ← архитектура приложения (Фаза 9)
+    └── UART_PROTOCOL.md             ← протокол STM32 → Pi (Фаза 9)
 ```
 
 ---
@@ -251,7 +247,7 @@ lift-indicator/
 
 | Команда | Что делает |
 |---|---|
-| `./bootstrap.sh` | Установить uv + just, запустить `just pi::bootstrap` |
+| `./bootstrap.sh` | Установить just, запустить `just pi::bootstrap` |
 | `just pi::check-deps` | Проверить just, docker, ssh, rsync |
 | `just pi::setup-ssh` | Сгенерировать SSH-ключ, скопировать на Pi |
 | `just pi::fetch-sysroot` | Скопировать /opt/vc с Pi для Docker |
@@ -267,6 +263,7 @@ lift-indicator/
 | `just build::test-verbose` | То же, подробный вывод |
 | `just build::pi` | Кросс-компиляция indicator + media_ingest |
 | `just build::pi-indicator` | Только indicator |
+| `just build::pi-debug` | Debug-сборка (-g3 -O0) для GDB |
 | `just build::format` | Применить clang-format |
 | `just build::check-format` | Проверить форматирование (без изменений) |
 | `just build::clean` | Удалить build/ (с подтверждением) |
@@ -277,6 +274,7 @@ lift-indicator/
 |---|---|
 | `just pi::deploy` | Бинари + скрипты + systemd units на Pi |
 | `just pi::deploy-bin` | Только бинари (быстро) |
+| `just pi::deploy-debug` | Debug-бинарь для GDB |
 | `just pi::ssh` | SSH на Pi |
 | `just pi::logs` | Хвост логов indicator в реальном времени |
 | `just pi::logs-ingest` | Хвост логов media-ingest |
@@ -284,6 +282,8 @@ lift-indicator/
 | `just pi::restart` | Перезапустить indicator |
 | `just pi::smoke` | Smoke test после деплоя |
 | `just pi::test-audio` | Воспроизвести тестовый WAV на Pi |
+| `just pi::gdbserver-start` | SSH-туннель + gdbserver на Pi |
+| `just pi::gdbserver-stop` | Остановить gdbserver |
 | `just pi::backup-image /dev/diskN` | Создать .img.gz образа SD-карты |
 
 ### Алиасы верхнего уровня
@@ -292,7 +292,7 @@ lift-indicator/
 |---|---|
 | `just init` | = `just pi::bootstrap` |
 | `just test` | = `just build::test` |
-| `just ship` | = `just build::pi` + `just pi::deploy` |
+| `just ship` | docker run → `just build::pi` + `just pi::deploy` |
 
 ### CI
 
@@ -308,10 +308,9 @@ lift-indicator/
 
 | Таргет | Тип | Хост | Pi |
 |---|---|---|---|
-| `inih` | static lib | ✅ | ✅ |
 | `indicator_domain` | static lib | ✅ | ✅ |
 | `unity` | static lib | ✅ | — |
-| `indicator_tests` | executable | ✅ | — |
+| `test_parser` … `test_config` | executables | ✅ | — |
 | `dispmanx_layers` | static lib | ❌ | ✅ |
 | `dispmanx_renderer` | static lib | ❌ | ✅ |
 | `indicator` | executable | ❌ | ✅ |
@@ -326,9 +325,9 @@ cmake -B build/host \
   -DINDICATOR_ENABLE_UBSAN=ON \
   -DCMAKE_BUILD_TYPE=Debug
 
-# Pi (через Docker):
+# Pi (через Docker / devcontainer):
 cmake -B build/pi \
-  -DCMAKE_TOOLCHAIN_FILE=cmake/Toolchain-RPiZero2W.cmake \
+  -DCMAKE_TOOLCHAIN_FILE=cmake/Toolchain-RPiZeroW.cmake \
   -DINDICATOR_PLATFORM_DISPMANX=ON \
   -DINDICATOR_BUILD_TESTS=OFF \
   -DCMAKE_BUILD_TYPE=Release
@@ -349,19 +348,29 @@ cmake -B build/pi \
 │   ├── ssh/rsync  ← деплой на Pi
 │   └── VSCode     ← IDE (Dev Containers extension)
 │
-├── Devcontainer (Docker: indicator-build)
-│   ├── arm-linux-gnueabihf-gcc   ← кросс-компилятор
-│   ├── clang / clangd            ← host тесты + LSP
-│   ├── clang-format / clang-tidy
-│   ├── cmake / ninja
-│   ├── just
-│   └── /opt/vc                   ← Pi sysroot (DispmanX, bcm_host)
+├── Devcontainer (Docker: indicator-build, Ubuntu 22.04)
+│   ├── arm-zig-cc (zig 0.13.0)      ← кросс-компилятор ARMv6
+│   ├── clang-17 / clangd-17          ← host тесты + LSP
+│   ├── clang-format-17 / clang-tidy-17
+│   ├── gdb-multiarch                 ← remote debug
+│   ├── cmake 3.28 / ninja
+│   ├── just 1.36
+│   └── /opt/vc                       ← Pi sysroot (DispmanX, bcm_host)
 │
-└── Raspberry Pi Zero 2W
+└── Raspberry Pi Zero W (ARM1176JZF-S, ARMv6ZK)
     ├── Buster Lite + systemd
     ├── SSH ←───── хост
+    ├── gdbserver (порт 3333)
     └── /dev/ttyAMA0 ←── STM32
 ```
+
+### Контексты: строгое правило
+
+| Контекст | Что можно делать |
+|---|---|
+| Devcontainer | `just build::*` — компиляция, тесты, форматирование |
+| Хост | `just pi::*` — деплой, SSH, управление сервисами |
+| Хост | `just ship` — docker run build + deploy |
 
 ### Типичная сессия разработки
 
@@ -377,25 +386,23 @@ just pi::logs             # смотреть логи в реальном вре
 just pi::smoke            # финальная проверка
 ```
 
-### Деплой нового устройства
+### Remote GDB
 
 ```bash
-# 1. Flash Buster Lite через rpi-imager (hostname + SSH + WiFi)
-# 2. Pi загрузилась, пингуется
+# 1. Собрать debug (devcontainer):
+just build::pi-debug
 
-# 3. Первичная настройка (один раз на устройство):
-just pi::setup-pi         # пакеты, ALSA, директории
+# 2. Задеплоить (хост):
+just pi::deploy-debug
 
-# 4. Деплой приложения:
-just build::pi            # сборка (devcontainer)
-just pi::deploy           # rsync на Pi
+# 3. Запустить туннель (хост, отдельный терминал):
+just pi::gdbserver-start
 
-# 5. Проверка:
-just pi::smoke
-
-# 6. Если нужно размножить — создать образ:
-just pi::backup-image /dev/rdisk2
+# 4. VSCode → F5 → "🐛 Debug: indicator (Pi Zero W)"
 ```
+
+GDB подключается через `host.docker.internal:3333`
+(SSH-туннель `localhost:3333 → Pi:3333`, открыт `gdbserver-start`).
 
 ---
 
@@ -405,11 +412,11 @@ just pi::backup-image /dev/rdisk2
 
 | Файл | Покрытие |
 |---|---|
-| `test_parser.c` | Валидный фрейм; неверный header/postfix; < или > 7 токенов; пустой токен; все варианты enum |
+| `test_parser.c` | CRC-16 корректный/некорректный; parse_frame (SOF/EOF/size/opcode); parse_payload (валидный, токены, пустые, enum bounds); mode_is_valid() |
 | `test_floor.c` | 1–9; 10–64; П; П1–П9; −1..−9; нестандартные → -1; граничные значения |
-| `test_state.c` | Первый фрейм → 5 событий; идентичный → 0; частичные изменения; sound/mode → NONE |
-| `test_sound_map.c` | DING этажи 5/25/70; UP с музыкой и без; OVERLOAD; NONE → valid=false; volume=0 → valid=false |
-| `test_config.c` | Корректный INI; несуществующий файл → дефолты; частичный INI; out-of-range; неизвестный ключ |
+| `test_state.c` | Первый фрейм → события; идентичный → 0; частичные изменения; edge-triggered sound |
+| `test_sound_map.c` | DING этажи 1/5/25/40/П; UP с музыкой и без; OVERLOAD; FIRE_ALARM; NONE → valid=false |
+| `test_config.c` | Корректный TOML; файл не найден → дефолты; частичный TOML; комментарии; неизвестный ключ |
 
 ### On-target smoke test (`just pi::smoke`)
 
@@ -437,7 +444,7 @@ steps:
 ├── scripts/
 │   └── smoke_test.sh
 ├── configs/device/
-│   └── pizero.ini
+│   └── nku_scheme.toml   ← конфигурация (TOML, не pizero.ini)
 ├── videos/
 │   └── output.mp4
 ├── resources/
@@ -452,6 +459,8 @@ steps:
     ├── 20-.wav, 30-.wav
     ├── floor.wav, podval.wav, minus.wav
     ├── up.wav, down.wav, overload.wav
+    ├── closing.wav, opening.wav        ← TODO: подтвердить наличие (В-02)
+    ├── g_single.wav, g_double.wav, g_triple.wav  ← TODO: уточнить маппинг (В-01, В-03)
     └── mus1.wav … mus7.wav
 ```
 
@@ -459,56 +468,68 @@ steps:
 
 ## 10. Фазы реализации
 
-### Фаза 0 — Настройка окружения (1–2 дня)
+### Фаза 0 — Настройка окружения ✅ ЗАКРЫТА
 
-**Цель:** Pi готова, Docker образ собран, кросс-компиляция работает.
+**Итог:** Pi готова (Buster Lite), Docker-образ собран (Ubuntu 22.04 + LLVM 17 + zig 0.13.0),
+кросс-компиляция ARM stub работает, rsync деплой работает.
 
-**Pi:**
-- [ ] Flash Buster Lite через rpi-imager (hostname, SSH, WiFi, пароль)
-- [ ] Дождаться загрузки: `ping indicator-01.local` → ответ
-- [ ] `just pi::setup-pi` — пакеты, ALSA softvol, директории
-- [ ] Проверить аудио: `just pi::test-audio`
-- [ ] Проверить видео: `ssh pi@indicator-01.local "omxplayer --layer 1 /tmp/test.mp4"`
-
-**Хост (macOS):**
-- [ ] Распаковать скелет, `git init`, первый коммит
-- [ ] `cp .env.example .env`
-- [ ] `./bootstrap.sh` → uv + just + SSH ключ + sysroot + Docker образ
-- [ ] `just build::test` → убедиться что тесты компилируются (пока пустые, должны пройти)
-- [ ] `just build::pi` → убедиться что кросс-компиляция работает (пока пустой main.c)
-- [ ] `just pi::deploy` → rsync работает
-
-**Критерий:** `just ship` (build-pi + deploy) завершается без ошибок.
+**Проблемы решены:**
+- P-01: созданы stub-файлы для CMake
+- P-02/P-03: `build/` переведён с named volume на bind mount
+- P-04: `CMAKE_RUNTIME_OUTPUT_DIRECTORY` → все бинари плоско в `build/pi/`
+- P-05: создана `deploy/` с `.service`/`.target` файлами
+- P-06: `just ship` только с хоста (запускает docker run внутри)
+- P-07: Raspbian Buster репозитории перенесены в архив → fix в setup_pi.sh
 
 ---
 
-### Фаза 1 — Domain-слой и тесты (3–4 дня)
+### Фаза 1 — Domain-слой и тесты ✅ ЗАКРЫТА
 
-**Цель:** бизнес-логика написана, покрыта тестами, ASan+UBSan чисто.
+**Итог:** бизнес-логика написана, 5/5 тестов зелёных, ASan+UBSan чисто, remote GDB работает.
 
-- [ ] `src/protocol/types.h` — все enum'ы (direction_t, mode_t, sound_t, parsed_frame_t)
-- [ ] `src/protocol/parser.c/.h` — `protocol_parse()`, без malloc, без side effects
-- [ ] `src/domain/floor.c/.h` — `floor_decode()`
-- [ ] `src/domain/sound_map.c/.h` — `sound_map_resolve()`, `sound_map_volume_percent()`
-- [ ] `src/domain/state.c/.h` — `state_apply_frame()` → `state_update_result_t`
-- [ ] `src/config/config.c/.h` — `config_load()`, дефолты, валидация
-- [ ] Все unit-тесты в `tests/`
-- [ ] `just build::test` → зелёный, ASan+UBSan без ошибок
+**Уточнения протокола, полученные в фазе:**
+- Устройство — Pi Zero W (ARMv6), не 2W; компилятор заменён на zig cc
+- Протокол — бинарный фрейм с CRC-16 (см. §12)
+- `s_code_t` расширен до 9 значений (включая CLOSING, OPENING, FIRE_ALARM, DONT_WORK, BUTTON)
+- `el_mode_t` — разрывный диапазон (0–9, 100, 101, 255); проверка через `mode_is_valid()`
+- Конфиг — только `nku_scheme.toml` (TOML), pizero.ini — legacy
 
-**Критерий:** 100% тестов зелёные. Ни строчки DispmanX.
+**Проблемы решены:**
+- P-08: GLIBC_2.34 mismatch → zig cc
+- P-09: Segfault до main() на ARMv6 → `-marm -mfloat-abi=hard`, `arm1176jzf_s`
+- P-10: Docker arm64/x86 проблемы → Ubuntu 22.04
+- P-11: ASan runtime → `libclang-rt-17-dev`
+- P-12: стale CMakeCache → `rm -rf build/pi` перед configure
+- P-13: clangd красные заголовки → `src/` использует `build/host/compile_commands.json`
+- P-14: GDB timeout → `host.docker.internal:3333`
+- P-15: SSH UseKeychain → patch в postCreateCommand
+- P-16: `cppdbg` требует `ms-vscode.cpptools`, не `cortex-debug`
+- P-17: multiple definition of main → отдельный executable на каждый test_*.c
 
 ---
 
-### Фаза 2 — UART transport + event loop (2–3 дня)
+### Фаза 2 — UART transport + event loop 🚧 В РАБОТЕ
 
-**Цель:** демон читает UART от STM32, парсит фреймы, логирует события.
+**Цель:** демон читает UART от STM32, парсит бинарные фреймы, логирует события.
 
-- [ ] `src/transport/uart.c/.h` — termios, frame assembly, `frame_ready_cb_t`, без malloc
-- [ ] `src/main.c` — poll-цикл: uart_fd + signalfd + timerfd
-- [ ] Логирование через syslog (уровни: ERROR / WARN / INFO / DEBUG)
-- [ ] Кросс-компиляция + деплой + `just pi::logs`
+- [ ] `src/transport/uart.c/.h`
+  - termios: 115200 baud, 8-bit, no parity, 1 stop bit, raw mode
+  - Сборка бинарного фрейма: ожидание SOF `0xAA`, чтение size, накопление data+CRC
+  - `frame_ready_cb_t` — коллбэк при полном фрейме
+  - Без malloc, без глобального состояния
+- [ ] `src/main.c` — poll-цикл
+  - `poll()` на uart_fd + signalfd + timerfd
+  - signalfd для SIGTERM / SIGINT / SIGCHLD
+  - timerfd: heartbeat раз в 30 с (лог статистики)
+  - Логирование через syslog: ERROR / WARN / INFO / DEBUG
+- [ ] Кросс-компиляция + деплой + проверка `just pi::logs`
 
-**Критерий:** в `journalctl -u indicator -f` виден каждый фрейм от STM32 с распаршенными полями.
+**Критерий:** в `journalctl -u indicator -f` виден каждый фрейм от STM32
+с распаршенными полями (floor, direction, mode, sound).
+
+**Открытые вопросы для этой фазы:**
+- В-04: подтвердить UART параметры на реальном трафике (115200, no parity, 8N1)
+- Проверить корректность CRC-16 на живых фреймах от STM32
 
 ---
 
@@ -517,7 +538,7 @@ steps:
 **Цель:** omxplayer под надзором демона, автоперезапуск при падении.
 
 - [ ] `src/player/video_player.c/.h`
-  - `posix_spawn` omxplayer (`--layer 1 --no-keys --loop --no-osd --win 0,0,W,H`)
+  - `posix_spawn` omxplayer (`--layer 1 --no-keys --loop --no-osd --win 0,0,600,1024`)
   - Отслеживание PID
   - `video_player_check_and_restart()` через SIGCHLD + signalfd
 - [ ] Проверка: `kill <omxplayer_pid>` → демон перезапускает за < 3 с
@@ -536,9 +557,9 @@ steps:
   - destroy+recreate для WEIGHT, MODE, NOTIFICATION, BACKGROUND
 - [ ] null-renderer (stub) для интеграционных тестов на хосте
 - [ ] init renderer в `main.c` → BACKGROUND + WEIGHT на старте
-- [ ] Обработка всех `state_event_t` → вызовы renderer
+- [ ] Обработка всех `state_update_result_t` → вызовы renderer
 
-**Критерий:** все состояния от STM32 корректно отображаются. Замерить latency: UART → экран (цель < 100 мс).
+**Критерий:** все состояния от STM32 корректно отображаются. Latency UART → экран < 100 мс.
 
 ---
 
@@ -552,7 +573,7 @@ steps:
   - `posix_spawn("aplay", file)` + waitpid
   - `kill(pid, SIGTERM)` при вытеснении
 - [ ] `amixer sset 'PCM' N%` при инициализации (из config)
-- [ ] Проверка приоритетов: DING прерывает музыку, CRITICAL прерывает DING
+- [ ] Проверка: DING прерывает музыку, CRITICAL прерывает DING
 
 **Критерий:** latency UART → начало звука < 100 мс. Приоритеты работают корректно.
 
@@ -562,9 +583,9 @@ steps:
 
 **Цель:** корректный запуск с нуля, supervision, логи в journald.
 
-- [ ] Все `.service` файлы в `deploy/`
-- [ ] `indicator.target` → autostart
-- [ ] Проверка: `power on` → система работает через N секунд (замерить)
+- [ ] Все `.service` файлы в `deploy/` (включая `indicator-setup.service`)
+- [ ] `indicator.target` → autostart через `multi-user.target`
+- [ ] Проверка: power on → система работает через N секунд (замерить)
 - [ ] Проверка: `systemctl kill indicator` → перезапуск за 2 с
 
 ---
@@ -591,7 +612,7 @@ steps:
 
 **Цель:** цифры этажа через растеризацию глифов, без PNG.
 
-- [ ] Перенести свой font-renderer в `src/font/` или `platform/font/`
+- [ ] Перенести font-renderer в `src/font/` или `platform/font/`
 - [ ] Адаптер: `font_render_to_rgba(char_code, w, h, rgba_buf)`
 - [ ] Переключить DIGIT_LEFT/RIGHT на `renderer_show_sprite_buffer()`
 - [ ] Убрать зависимость от `resources/chars/*.png`
@@ -601,7 +622,7 @@ steps:
 ### Фаза 9 — Полировка (ongoing)
 
 - [ ] `docs/UART_PROTOCOL.md` — финальная спецификация протокола
-- [ ] `docs/ARCHITECTURE.md` — финальная архитектура приложения
+- [ ] `docs/ARCHITECTURE.md` — финальная архитектура
 - [ ] GitHub Actions CI: `just ci::pipeline`
 - [ ] Финальные замеры latency (UART → экран, UART → звук)
 - [ ] Ревью логов: достаточно ли информации для диагностики в поле?
@@ -614,36 +635,156 @@ steps:
 |---|---|
 | `config_utility` (Rust) | Без изменений |
 | `rpi_menu` (Rust TUI) | Без изменений |
-| `ini.c/.h` | → `third_party/inih/` |
 | Andrew Duncan layers | → `platform/dispmanx/layers/` |
-| `pizero.ini`, `config.txt` | Без изменений |
+| `nku_scheme.toml` | Без изменений (читаем, не генерируем) |
 
 ---
 
 ## 12. UART протокол (справочник)
 
+### 12.1 Бинарный фрейм
+
 ```
-Формат: #STM:<X><val>:<X><val>:<X><val>:<X><val>:<X><val>:E#\r\n
+┌──────┬──────┬────────┬──────────────────────┬──────────┬──────────┬──────┐
+│ SOF  │ SIZE │ OPCODE │        DATA          │  CRC_HI  │  CRC_LO  │ EOF  │
+│ 0xAA │  1B  │   1B   │     SIZE байт        │    1B    │    1B    │ 0xBB │
+└──────┴──────┴────────┴──────────────────────┴──────────┴──────────┴──────┘
 
-Токен 1: #STM  (header)
-Токен 2: left_char   — код левого символа
-Токен 3: right_char  — код правого символа
-Токен 4: direction   — 0=None, 1=Up, 2=Down
-Токен 5: sound       — 0=None, 1=Ding, 2=Up, 3=Down, 4=Closing, 5=Opening, 6=Overload
-Токен 6: mode        — 0=None, 3=FireAlarm, 6=Overload, 50=Calling, 51=Talking
-Токен 7: E#\r\n (postfix)
-
-Кодирование символов:
-  0–9   → цифра
-  16    → пробел (пустая позиция)
-  17    → П (подвал)
-  22    → - (минус)
-
-Декодирование этажа:
-  left=0–9,  right=0–9  → two-digit floor (10–64)
-  left=16,   right=0–9  → single-digit floor (1–9)
-  left=16,   right=17   → П (70)
-  left=17,   right=1–9  → П1–П9 (71–79)
-  left=22,   right=1–9  → −1..−9 (81–89)
-  otherwise             → -1 (нестандартный)
+SOF    = 0xAA           (Start of Frame)
+SIZE   = длина DATA в байтах
+OPCODE = 0xDA           (индикаторные данные)
+DATA   = текстовый payload (см. 12.2)
+CRC    = CRC-16/CCITT-FALSE по полю DATA
+EOF    = 0xBB           (End of Frame)
 ```
+
+**Примечание:** CRC считается только по DATA, без SOF/SIZE/OPCODE/EOF.
+
+### 12.2 Текстовый payload (opcode=0xDA)
+
+```
+#STM:L<val>:R<val>:A<val>:S<val>:M<val>:E#\r\n
+
+Поле  Токен  Описание
+L     2      left_char  — код левого символа дисплея
+R     3      right_char — код правого символа дисплея
+A     4      arrows_state_t
+S     5      s_code_t (звук)
+M     6      el_mode_t (режим)
+```
+
+STM32 отправляет фреймы **только при изменении состояния** (edge-triggered, не polling).
+Звук — тоже edge-triggered: ненулевое значение один раз как событие.
+
+### 12.3 Коды символов (left_char / right_char)
+
+| Код | Символ | Значение |
+|-----|--------|----------|
+| 0–9 | `'0'`–`'9'` | Цифра |
+| 16  | ` ` (пробел) | Пустая позиция |
+| 17  | `П` | Подвал |
+| 22  | `-` | Минус |
+
+### 12.4 Декодирование этажа (floor_decode)
+
+| left | right | Результат |
+|------|-------|-----------|
+| 0–9 | 0–9 | двузначный этаж 10–64 |
+| 16 | 0–9 | однозначный этаж 1–9 |
+| 16 | 17 | П (подвал, код 70) |
+| 17 | 1–9 | П1–П9 (коды 71–79) |
+| 22 | 1–9 | −1..−9 (коды 81–89) |
+| иначе | | -1 (нестандартный) |
+
+### 12.5 arrows_state_t
+
+```c
+typedef enum {
+    ARROWS_NONE = 0,
+    ARROWS_UP   = 1,
+    ARROWS_DOWN = 2,
+} arrows_state_t;
+```
+
+### 12.6 s_code_t (звук)
+
+```c
+typedef enum {
+    SOUND_NONE       = 0,
+    SOUND_DING       = 1,   // анонс этажа
+    SOUND_UP         = 2,   // движение вверх
+    SOUND_DOWN       = 3,   // движение вниз
+    SOUND_CLOSING    = 4,   // двери закрываются
+    SOUND_OPENING    = 5,   // двери открываются
+    SOUND_OVERLOAD   = 6,   // перегрузка
+    SOUND_FIRE_ALARM = 7,   // пожарная тревога
+    SOUND_DONT_WORK  = 8,   // не работает
+    SOUND_BUTTON     = 9,   // нажатие кнопки
+} s_code_t;
+```
+
+**WAV-маппинг (частично уточнить — открытые вопросы В-01, В-02):**
+
+| s_code_t | WAV-файлы |
+|----------|-----------|
+| SOUND_DING | зависит от этажа (см. таблицу sound_map) |
+| SOUND_UP | `up.wav` |
+| SOUND_DOWN | `down.wav` |
+| SOUND_CLOSING | `closing.wav` (TODO: подтвердить В-02) |
+| SOUND_OPENING | `opening.wav` (TODO: подтвердить В-02) |
+| SOUND_OVERLOAD | `overload.wav` |
+| SOUND_FIRE_ALARM | `g_triple.wav` (TODO: уточнить В-01) |
+| SOUND_DONT_WORK | `g_double.wav` (TODO: уточнить В-01) |
+| SOUND_BUTTON | `g_single.wav` (TODO: уточнить В-01) |
+
+**Логика DING (sound_map_resolve):**
+- Этаж 1–20 → `floor.wav` + `N.wav`
+- Этаж 21–40 → `floor.wav` + `20.wav` + `N.wav` (где N = остаток)
+- Этаж 30, 40 → `floor.wav` + `N.wav` (одно число)
+- Этаж П → `podval.wav`
+- Этаж П1–П9 → `podval.wav` + `N.wav`
+- Этаж −1..−9 → `minus.wav` + `N.wav`
+- `has_music=true` → добавить `mus<N>.wav` с пониженной громкостью
+
+### 12.7 el_mode_t (режим)
+
+```c
+typedef enum {
+    MODE_NORMAL              = 0,
+    MODE_FIRE_ALARM          = 1,   // пожарная тревога
+    MODE_OVERLOAD            = 2,   // перегрузка
+    // ... значения 3–9 ...
+    MODE_UPS_MALFUNCTION     = 9,
+    MODE_DISPATCH_CALL       = 100, // вызов диспетчера
+    MODE_DISPATCH_ANSWER     = 101, // ответ диспетчера
+    MODE_CONN_LOST           = 255, // связь потеряна
+} el_mode_t;
+```
+
+**Диапазон разрывный.** Проверка валидности: `mode_is_valid()`, не `<= MAX`.
+
+### 12.8 Громкость (из nku_scheme.toml)
+
+```toml
+[soundvolume]
+possible_values = ["0%", "25%", "50%", "75%", "100%"]
+default = "50%"
+
+[musicvolume]
+possible_values = ["0%", "25%", "50%", "75%", "100%"]
+default = "0%"
+```
+
+`sound_map_volume_percent()` переводит строки конфига в integer 0–100.
+`musicvolume = "0%"` → музыка не воспроизводится (`valid = false`).
+
+---
+
+## 13. Открытые вопросы
+
+| ID | Вопрос | Влияет на |
+|----|--------|-----------|
+| В-01 | Какие WAV для SOUND_FIRE_ALARM / DONT_WORK / BUTTON? | sound_map.c, тесты |
+| В-02 | Есть ли closing.wav и opening.wav в sounds/? | sound_map.c |
+| В-03 | Когда g_double / g_single — зависимость от контекста? | sound_map.c |
+| В-04 | Подтвердить UART параметры на реальном трафике с STM32 | uart.c |

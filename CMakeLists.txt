@@ -3,7 +3,7 @@ project(lift_indicator C)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
-set(CMAKE_C_EXTENSIONS OFF)
+set(CMAKE_C_EXTENSIONS ON)
 
 # ─── Опции ───────────────────────────────────────────────────────────────────
 
@@ -24,13 +24,9 @@ if(INDICATOR_ENABLE_ASAN OR INDICATOR_ENABLE_UBSAN)
     include(cmake/Sanitizers.cmake)
 endif()
 
-# ─── Экспорт compile_commands.json для clangd ────────────────────────────────
+# ─── compile_commands.json для clangd ────────────────────────────────────────
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-
-# ─── Third-party ─────────────────────────────────────────────────────────────
-
-# add_subdirectory(third_party/inih)
 
 # ─── Domain-библиотека (platform-free, тестируется на хосте) ─────────────────
 
@@ -42,34 +38,56 @@ add_library(indicator_domain STATIC
     src/config/config.c
 )
 target_include_directories(indicator_domain PUBLIC src/)
+apply_warnings(indicator_domain)
+
+# ─── Transport-библиотека (uart.c — компилируется и на хосте, и на Pi) ───────
+#
+# uart.c зависит только от POSIX/termios — нет DispmanX, нет bcm_host.
+# Сборка на хосте позволяет покрыть uart_process_rx() unit-тестами
+# через pipe() без реального UART-устройства.
+
+add_library(indicator_transport STATIC
+    src/transport/uart.c
+)
+target_include_directories(indicator_transport PUBLIC src/)
+target_link_libraries(indicator_transport PUBLIC indicator_domain)
+apply_warnings(indicator_transport)
+
+# Передать флаг в uart.c для компиляции uart_wrap_fd() при сборке тестов
+if(INDICATOR_BUILD_TESTS)
+    target_compile_definitions(indicator_transport PUBLIC INDICATOR_BUILD_TESTS)
+endif()
 
 # ─── Host тесты ──────────────────────────────────────────────────────────────
 
 if(INDICATOR_BUILD_TESTS)
     enable_testing()
- 
-    # Unity — единственный vendored файл, компилируем один раз
+
     add_library(unity STATIC tests/unity/unity.c)
     target_include_directories(unity PUBLIC tests/unity/)
- 
-    # Список тест-файлов → отдельный executable + CTest entry
-    set(INDICATOR_TEST_SOURCES
+
+    # Тесты domain-слоя (Фаза 1)
+    set(INDICATOR_DOMAIN_TEST_SOURCES
         test_parser
         test_floor
         test_sound_map
         test_state
         test_config
     )
- 
-    foreach(TEST_NAME ${INDICATOR_TEST_SOURCES})
+    foreach(TEST_NAME ${INDICATOR_DOMAIN_TEST_SOURCES})
         add_executable(${TEST_NAME} tests/${TEST_NAME}.c)
         target_link_libraries(${TEST_NAME} PRIVATE indicator_domain unity)
         target_include_directories(${TEST_NAME} PRIVATE src/)
         add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
- 
-    
         apply_warnings(${TEST_NAME})
     endforeach()
+
+    # Тест transport-слоя (Фаза 2)
+    add_executable(test_uart tests/test_uart.c)
+    target_link_libraries(test_uart PRIVATE indicator_transport unity)
+    target_include_directories(test_uart PRIVATE src/)
+    add_test(NAME test_uart COMMAND test_uart)
+    apply_warnings(test_uart)
 endif()
 
 # ─── Platform-зависимые таргеты (только Pi) ──────────────────────────────────
@@ -80,7 +98,6 @@ if(INDICATOR_PLATFORM_DISPMANX)
 
     add_executable(indicator
         src/main.c
-        src/transport/uart.c
         src/audio/audio.c
         src/player/video_player.c
         src/media/media_ipc.c
@@ -89,6 +106,7 @@ if(INDICATOR_PLATFORM_DISPMANX)
     target_link_libraries(indicator
         PRIVATE
             indicator_domain
+            indicator_transport
             dispmanx_renderer
             pthread
     )

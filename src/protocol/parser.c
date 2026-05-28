@@ -110,7 +110,7 @@ parse_result_t protocol_parse_payload(const mu_frame_t *frame, parsed_frame_t *o
 
     const char *s = (const char *) frame->data;
 
-    if (frame->data_len < 5u || strncmp(s, "#STM:", 5) != 0)
+    if (frame->data_len < 5U || strncmp(s, "#STM:", 5) != 0)
     {
         return PARSE_ERROR_PAYLOAD;
     }
@@ -151,22 +151,36 @@ parse_result_t protocol_parse_payload(const mu_frame_t *frame, parsed_frame_t *o
 
     /* Валидация диапазонов */
     if (values[0] < 0 || values[0] > (int) CHAR_CODE_MAX)
+    {
         return PARSE_ERROR_RANGE;
+    }
+
     if (values[1] < 0 || values[1] > (int) CHAR_CODE_MAX)
+    {
         return PARSE_ERROR_RANGE;
+    }
+
     if (values[2] < 0 || values[2] > (int) ARROW_CODE_MAX)
+    {
         return PARSE_ERROR_RANGE;
+    }
+
     if (values[3] < 0 || values[3] > (int) SOUND_CODE_MAX)
+    {
         return PARSE_ERROR_RANGE;
+    }
+
     /* mode_t: нельзя проверять <= MAX из-за разрыва 0–9, 100, 101, 255 */
     if (!mode_is_valid(values[4]))
+    {
         return PARSE_ERROR_RANGE;
+    }
 
     out->left_char  = (char_code_t) values[0];
     out->right_char = (char_code_t) values[1];
     out->arrow      = (arrow_t) values[2];
     out->sound      = (sound_t) values[3];
-    out->mode       = (mode_t) values[4];
+    out->mode       = (inndicator_mode_t) values[4];
 
     return PARSE_OK;
 }

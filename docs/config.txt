@@ -5,7 +5,7 @@ dtparam=audio=off
 
 # Adding support of the custom TFT display
 # RGB 10.1" 60 Hz fps WxHx60Hz = 37 MHz
-hdmi_timings=1024 0 70 90 70 600 0 1 23 0 0 0 0 60 0 37000000 1 
+hdmi_timings=1024 0 70 90 75 600 0 1 23 0 0 0 0 60 0 37000000 1 
 hdmi_group=2
 hdmi_mode=87
 hdmi_force_hotplug=1
