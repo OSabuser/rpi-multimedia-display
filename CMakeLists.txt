@@ -30,7 +30,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # ─── Third-party ─────────────────────────────────────────────────────────────
 
-add_subdirectory(third_party/inih)
+# add_subdirectory(third_party/inih)
 
 # ─── Domain-библиотека (platform-free, тестируется на хосте) ─────────────────
 

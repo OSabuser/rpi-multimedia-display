@@ -17,18 +17,20 @@
 /* ─────────────────────────────────────────────────────────────────────────────
  * Состояние индикатора
  * ──────────────────────────────────────────────────────────────────────────── */
-typedef struct {
-    char_code_t left_char;   /* текущий левый символ          */
-    char_code_t right_char;  /* текущий правый символ         */
-    arrow_t     arrow;       /* текущее направление           */
-    mode_t      mode;        /* текущий режим                 */
-    int         initialized; /* 0 = ещё не получали ни одного фрейма */
+typedef struct
+{
+    char_code_t left_char;  /* текущий левый символ          */
+    char_code_t right_char; /* текущий правый символ         */
+    arrow_t arrow;          /* текущее направление           */
+    mode_t mode;            /* текущий режим                 */
+    int initialized;        /* 0 = ещё не получали ни одного фрейма */
 } indicator_state_t;
 
 /* ─────────────────────────────────────────────────────────────────────────────
  * Результат применения фрейма
  * ──────────────────────────────────────────────────────────────────────────── */
-typedef struct {
+typedef struct
+{
     int floor_changed;   /* left_char или right_char изменились */
     int arrow_changed;   /* arrow изменился                     */
     int mode_changed;    /* mode изменился                      */
@@ -52,5 +54,4 @@ void state_init(indicator_state_t *state);
  *
  * Чистая функция (без побочных эффектов кроме изменения *state).
  */
-state_update_result_t state_apply_frame(indicator_state_t    *state,
-                                         const parsed_frame_t *frame);
+state_update_result_t state_apply_frame(indicator_state_t *state, const parsed_frame_t *frame);

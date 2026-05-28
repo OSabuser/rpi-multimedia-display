@@ -1,0 +1,80 @@
+# .clangd
+#
+# Три профиля compile_commands:
+#
+#   tests/          → build/host  (clang x86/arm64, ASan, полные системные заголовки)
+#   src/            → build/host  (domain-код платформонезависим, host заголовки идеальны)
+#   platform/       → build/pi   (DispmanX, bcm_host — нужны /opt/vc заголовки)
+#
+# Почему src/ → build/host, а не build/pi:
+#   arm-zig-cc хранит системные заголовки внутри /opt/zig/lib/libc/include/
+#   clangd не знает этот путь без --query-driver, который работает нестабильно
+#   с shell-wrapper скриптами. Domain-код — чистый C11 без платформозависимости,
+#   host compile_commands даёт идеальный LSP без ложных ошибок.
+
+---
+# Тесты — host (clang, x86/arm64, ASan)
+If:
+  PathMatch: "tests/.*\\.c"
+CompileFlags:
+  CompilationDatabase: build/host
+Diagnostics:
+  ClangTidy:
+    Remove:
+      - readability-identifier-naming
+      - readability-function-cognitive-complexity
+  UnusedIncludes: None
+
+---
+# Domain-код — тоже host (платформонезависимый C11)
+If:
+  PathMatch: "src/.*\\.(c|h)"
+CompileFlags:
+  CompilationDatabase: build/host
+
+---
+# DispmanX — Pi compile_commands (/opt/vc заголовки)
+# Диагностика отключена: zig-сгенерированные пути clangd всё равно не разрешит идеально
+If:
+  PathMatch: "platform/.*\\.(c|h)"
+CompileFlags:
+  CompilationDatabase: build/pi
+Diagnostics:
+  ClangTidy:
+    Remove:
+      - "*"
+  UnusedIncludes: None
+  Suppress: "*"
+
+---
+# third_party — vendored, tidy отключён
+If:
+  PathMatch: "third_party/.*\\.(c|h)"
+Diagnostics:
+  ClangTidy:
+    Remove:
+      - "*"
+  UnusedIncludes: None
+
+---
+# Глобальные настройки
+Index:
+  Background: Build
+Diagnostics:
+  ClangTidy:
+    Add:
+      - bugprone-*
+      - clang-analyzer-*
+      - performance-*
+      - readability-*
+      - portability-*
+    Remove:
+      - readability-magic-numbers
+      - readability-isolate-declaration
+      - bugprone-easily-swappable-parameters
+      - performance-no-int-to-ptr
+  UnusedIncludes: Enabled
+InlayHints:
+  Enabled: true
+  ParameterNames: true
+  DeducedTypes: true

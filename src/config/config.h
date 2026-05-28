@@ -20,17 +20,18 @@
 /* ─────────────────────────────────────────────────────────────────────────────
  * Значения по умолчанию
  * ──────────────────────────────────────────────────────────────────────────── */
-#define CONFIG_DEFAULT_SOUND_VOLUME  50
-#define CONFIG_DEFAULT_MUSIC_VOLUME   0
-#define CONFIG_DEFAULT_LOAD_IDX       0
+#define CONFIG_DEFAULT_SOUND_VOLUME 50
+#define CONFIG_DEFAULT_MUSIC_VOLUME 0
+#define CONFIG_DEFAULT_LOAD_IDX     0
 
 /* ─────────────────────────────────────────────────────────────────────────────
  * Конфигурация устройства
  * ──────────────────────────────────────────────────────────────────────────── */
-typedef struct {
-    int sound_volume_percent;  /* 0 | 25 | 50 | 75 | 100   */
-    int music_volume_percent;  /* 0 | 25 | 50 | 75 | 100   */
-    int load_capacity_idx;     /* 0-based индекс в possible_values → load_N.png */
+typedef struct
+{
+    int sound_volume_percent; /* 0 | 25 | 50 | 75 | 100   */
+    int music_volume_percent; /* 0 | 25 | 50 | 75 | 100   */
+    int load_capacity_idx;    /* 0-based индекс в possible_values → load_N.png */
 } config_t;
 
 /* ─────────────────────────────────────────────────────────────────────────────

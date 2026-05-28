@@ -1,33 +1,90 @@
+# syntax=docker/dockerfile:1
 # =============================================================================
 # build-env/Dockerfile
+#
+# Stage 1 (zig-stage): скачиваем zig — кэшируется при изменении ZIG_VERSION.
+# Stage 2 (dev):       Ubuntu 22.04 + LLVM 17 + dev-инструменты.
+#
+# Почему Ubuntu 22.04, а не Buster:
+#   - zig cc полностью self-contained: crt*.o, libc компилируются под
+#     целевой arm1176jzf_s независимо от хостового дистрибутива.
+#   - Ubuntu 22.04 (Jammy) поддерживается до 2027, актуальные пакеты.
+#   - LLVM официально поддерживает Jammy → clangd-17, clang-tidy-17
+#     устанавливаются без танцев с архивами.
 # =============================================================================
 
-FROM debian:buster-slim
+# ─── Stage 1: zig ────────────────────────────────────────────────────────────
+
+FROM ubuntu:22.04 AS zig-stage
+
+ARG ZIG_VERSION=0.13.0
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl ca-certificates xz-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN set -eux; \
+    ARCH="$(uname -m)"; \
+    case "$ARCH" in \
+        x86_64)  ZIG_ARCH="x86_64"  ;; \
+        aarch64) ZIG_ARCH="aarch64" ;; \
+        *) echo "Unsupported arch: $ARCH" && exit 1 ;; \
+    esac; \
+    mkdir -p /opt/zig && \
+    curl -fsSL \
+        "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-${ZIG_ARCH}-${ZIG_VERSION}.tar.xz" \
+    | tar -xJ -C /opt/zig --strip-components=1
+
+# ─── Stage 2: dev ────────────────────────────────────────────────────────────
+
+FROM ubuntu:22.04 AS dev
 
 LABEL maintainer="lift-indicator"
 
-# ─── Buster EOL → архивные репозитории ───────────────────────────────────────
+ENV DEBIAN_FRONTEND=noninteractive
 
-RUN echo "deb http://archive.debian.org/debian buster main contrib non-free" > /etc/apt/sources.list && \
-    echo "deb http://archive.debian.org/debian-security buster/updates main contrib non-free" >> /etc/apt/sources.list && \
-    echo 'Acquire::Check-Valid-Until "false";' > /etc/apt/apt.conf.d/99no-check-valid
-
-# ─── Системные пакеты ────────────────────────────────────────────────────────
+# ─── LLVM 17: clangd, clang-tidy, clang-format ───────────────────────────────
+# Официальный LLVM apt repo для Ubuntu Jammy.
+# clangd-17 необходим для поддержки `If:` секций в .clangd (multi-profile).
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    clang \
-    clang-tidy \
-    clang-format \
+        gnupg ca-certificates curl wget && \
+    curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key \
+    | gpg --dearmor -o /usr/share/keyrings/llvm.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/llvm.gpg] http://apt.llvm.org/jammy/ llvm-toolchain-jammy-17 main" \
+    > /etc/apt/sources.list.d/llvm.list && \
+    rm -rf /var/lib/apt/lists/*
+
+# ─── Основные пакеты ─────────────────────────────────────────────────────────
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # LLVM 17 инструменты
+    clang-17 \
+    clangd-17 \
+    libclang-rt-17-dev \
+    clang-format-17 \
+    clang-tidy-17 \
+    # Remote debug
+    gdb-multiarch \
+    # Host тесты (нужен libpng для host-сборки если будем тестировать PNG)
+    libpng-dev \
+    # SSH для just pi::* и GDB tunnel
+    openssh-client \
+    # Сборка
     make \
     ninja-build \
-    libpng-dev \
+    # Утилиты
     git \
     rsync \
-    curl \
-    ca-certificates \
-    xz-utils \
     file \
     && rm -rf /var/lib/apt/lists/*
+
+# ─── Алиасы: clang-17 → clang ────────────────────────────────────────────────
+
+RUN update-alternatives --install /usr/bin/clangd       clangd       /usr/bin/clangd-17       100 && \
+    update-alternatives --install /usr/bin/clang        clang        /usr/bin/clang-17        100 && \
+    update-alternatives --install /usr/bin/clang-tidy   clang-tidy   /usr/bin/clang-tidy-17   100 && \
+    update-alternatives --install /usr/bin/clang-format clang-format /usr/bin/clang-format-17 100
 
 # ─── cmake ───────────────────────────────────────────────────────────────────
 
@@ -43,31 +100,6 @@ RUN set -eux; \
         "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-${CMAKE_ARCH}.tar.gz" \
     | tar -xz -C /usr/local --strip-components=1
 
-# ─── zig ─────────────────────────────────────────────────────────────────────
-# Zig-тарбол: zig-linux-ARCH-VER/{zig,lib/,doc/,...}
-# Распаковываем в /opt/zig/, бинарь симлинкуем в PATH.
-# Zig ищет свою lib/ рядом с собой → держим вместе в /opt/zig/.
-
-ARG ZIG_VERSION=0.13.0
-RUN set -eux; \
-    ARCH="$(uname -m)"; \
-    case "$ARCH" in \
-        x86_64)  ZIG_ARCH="x86_64"  ;; \
-        aarch64) ZIG_ARCH="aarch64" ;; \
-        *) echo "Unsupported arch: $ARCH" && exit 1 ;; \
-    esac; \
-    mkdir -p /opt/zig && \
-    curl -fsSL \
-        "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-${ZIG_ARCH}-${ZIG_VERSION}.tar.xz" \
-    | tar -xJ -C /opt/zig --strip-components=1 && \
-    ln -s /opt/zig/zig /usr/local/bin/zig
-
-# ─── Wrapper: arm-zig-cc ─────────────────────────────────────────────────────
-# Pi Zero W: ARM1176JZF-S = arm1176jzf_s в терминологии zig/llvm.
-
-RUN printf '#!/bin/sh\nexec zig cc -target arm-linux-gnueabihf -mcpu=arm1176jzf_s "$@"\n' \
-    > /usr/local/bin/arm-zig-cc && chmod +x /usr/local/bin/arm-zig-cc
-
 # ─── just ────────────────────────────────────────────────────────────────────
 
 ARG JUST_VERSION=1.36.0
@@ -82,7 +114,17 @@ RUN set -eux; \
         "https://github.com/casey/just/releases/download/${JUST_VERSION}/just-${JUST_VERSION}-${JUST_ARCH}-unknown-linux-musl.tar.gz" \
     | tar -xz -C /usr/local/bin just
 
-# ─── Pi sysroot: /opt/vc ─────────────────────────────────────────────────────
+# ─── zig (из Stage 1) ────────────────────────────────────────────────────────
+
+COPY --from=zig-stage /opt/zig /opt/zig
+RUN ln -s /opt/zig/zig /usr/local/bin/zig
+
+# ─── Wrapper: arm-zig-cc ─────────────────────────────────────────────────────
+
+RUN printf '#!/bin/sh\nexec zig cc -target arm-linux-gnueabihf -mcpu=arm1176jzf_s "$@"\n' \
+    > /usr/local/bin/arm-zig-cc && chmod +x /usr/local/bin/arm-zig-cc
+
+# ─── Pi sysroot: /opt/vc (DispmanX, bcm_host) ────────────────────────────────
 
 COPY pi-sysroot/opt/vc /opt/vc
 
@@ -96,5 +138,8 @@ WORKDIR /project
 
 RUN echo "=== zig ===" && zig version && \
     echo "=== arm-zig-cc ===" && arm-zig-cc --version 2>&1 | head -1 && \
+    echo "=== clangd ===" && clangd --version && \
+    echo "=== clang-format ===" && clang-format --version && \
+    echo "=== gdb-multiarch ===" && gdb-multiarch --version | head -1 && \
     echo "=== cmake ===" && cmake --version | head -1 && \
     echo "=== just ===" && just --version

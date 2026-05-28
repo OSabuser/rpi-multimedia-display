@@ -9,27 +9,29 @@
 
 #pragma once
 
+#include "types.h"
+
 #include <stddef.h>
 #include <stdint.h>
-#include "types.h"
 
 /* ─────────────────────────────────────────────────────────────────────────────
  * Константы бинарного протокола
  * ──────────────────────────────────────────────────────────────────────────── */
-#define MU_SYNC1                   0xAAu
-#define MU_SYNC2                   0xBBu
-#define MU_OPCODE_ELEVATOR_STATUS  0xDAu
+#define MU_SYNC1                  0xAAu
+#define MU_SYNC2                  0xBBu
+#define MU_OPCODE_ELEVATOR_STATUS 0xDAu
 
 /** Накладные расходы фрейма: sync1(1)+size(1)+opcode(1)+crc_h(1)+crc_l(1)+sync2(1) */
-#define MU_FRAME_OVERHEAD          6u
+#define MU_FRAME_OVERHEAD 6u
 
 /** Максимальный размер поля data (по спецификации: 0..255) */
-#define MU_DATA_MAX                255u
+#define MU_DATA_MAX 255u
 
 /* ─────────────────────────────────────────────────────────────────────────────
  * Бинарный фрейм — результат protocol_parse_frame()
  * ──────────────────────────────────────────────────────────────────────────── */
-typedef struct {
+typedef struct
+{
     uint8_t opcode;
     uint8_t data[MU_DATA_MAX + 1u]; /* +1: null-терминатор для строковых операций */
     uint8_t data_len;
@@ -38,14 +40,15 @@ typedef struct {
 /* ─────────────────────────────────────────────────────────────────────────────
  * Коды результата парсинга
  * ──────────────────────────────────────────────────────────────────────────── */
-typedef enum {
-    PARSE_OK             = 0, /* успех                                          */
+typedef enum
+{
+    PARSE_OK = 0, /* успех                                          */
     PARSE_NEED_MORE_DATA = 1, /* фрейм неполный, ждать следующих байт           */
-    PARSE_ERROR_SYNC1    = 2, /* байт sync1 (0xAA) не найден                   */
-    PARSE_ERROR_SYNC2    = 3, /* байт sync2 (0xBB) не совпал                   */
-    PARSE_ERROR_CRC      = 4, /* CRC не совпадает                               */
-    PARSE_ERROR_PAYLOAD  = 5, /* неверный формат текстовой нагрузки             */
-    PARSE_ERROR_RANGE    = 6  /* значение поля вне допустимого диапазона        */
+    PARSE_ERROR_SYNC1 = 2, /* байт sync1 (0xAA) не найден                   */
+    PARSE_ERROR_SYNC2 = 3, /* байт sync2 (0xBB) не совпал                   */
+    PARSE_ERROR_CRC   = 4, /* CRC не совпадает                               */
+    PARSE_ERROR_PAYLOAD = 5, /* неверный формат текстовой нагрузки             */
+    PARSE_ERROR_RANGE = 6 /* значение поля вне допустимого диапазона        */
 } parse_result_t;
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -81,9 +84,8 @@ uint16_t protocol_crc16(const uint8_t *data, size_t len);
  * При ошибках sync2/CRC: consumed = start+1 (продвинуться за плохой sync1).
  * При отсутствии sync1: consumed = len (весь буфер — мусор).
  */
-parse_result_t protocol_parse_frame(const uint8_t *buf, size_t len,
-                                     mu_frame_t    *out,
-                                     size_t        *consumed);
+parse_result_t protocol_parse_frame(const uint8_t *buf, size_t len, mu_frame_t *out,
+                                    size_t *consumed);
 
 /**
  * protocol_parse_payload — разобрать текстовую нагрузку opcode=0xDA.
@@ -92,5 +94,4 @@ parse_result_t protocol_parse_frame(const uint8_t *buf, size_t len,
  *
  * Возвращает PARSE_OK или PARSE_ERROR_PAYLOAD / PARSE_ERROR_RANGE.
  */
-parse_result_t protocol_parse_payload(const mu_frame_t *frame,
-                                       parsed_frame_t   *out);
+parse_result_t protocol_parse_payload(const mu_frame_t *frame, parsed_frame_t *out);

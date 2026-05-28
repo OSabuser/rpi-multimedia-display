@@ -305,7 +305,85 @@ backup-image disk:
     echo "  ⚠️   Убедитесь что SD-карта вставлена и не примонтирована"
     sudo dd if="{{disk}}" bs=4m status=progress | gzip > "${OUT}"
     echo "  ✅  Image saved: ${OUT}"
+# =============================================================================
+# Remote GDB через SSH-туннель
+#
+# Схема:
+#   devcontainer (gdb-multiarch :3333) ─── SSH tunnel ─── Pi (gdbserver :3333)
+#
+# Порядок:
+#   1. just build::pi-debug   (devcontainer)
+#   2. just pi::deploy-debug  (хост или devcontainer)
+#   3. just pi::gdbserver-start  ← открывает туннель, ждёт подключения
+#   4. F5 в VSCode → launch.json "Debug: indicator (Pi Zero W)"
+# =============================================================================
 
+[doc('Открыть SSH-туннель и запустить gdbserver на Pi')]
+[group('util')]
+gdbserver-start:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    BINARY="{{PI_DIR}}/indicator-debug"
+    LOCAL_PORT=3333
+    REMOTE_PORT=3333
+
+    # ── 1. Проверить что бинарь есть ─────────────────────────────────────────
+    echo "  🔌  Checking indicator-debug on Pi..."
+    ssh "{{_pi}}" "test -f ${BINARY}" || {
+        echo "  ❌  indicator-debug not found on Pi. Run: just pi::deploy-debug"
+        exit 1
+    }
+
+    # ── 2. Убить старый gdbserver если есть ──────────────────────────────────
+    # || true снаружи SSH: защищает от exit 255 если pkill не найден
+    # или gdbserver не запущен (pkill возвращает 1 при отсутствии процесса)
+    echo "  🔌  Stopping any existing gdbserver..."
+    ssh "{{_pi}}" "pkill -f gdbserver 2>/dev/null; true" || true
+    sleep 1
+
+    # ── 3. Запустить gdbserver на Pi ─────────────────────────────────────────
+    echo "  🚀  Starting gdbserver on Pi (port ${REMOTE_PORT})..."
+    ssh "{{_pi}}" "nohup gdbserver :${REMOTE_PORT} ${BINARY} > /tmp/gdbserver.log 2>&1 &"
+    sleep 1
+
+    # ── 4. Проверить что gdbserver запустился ─────────────────────────────────
+    if ! ssh "{{_pi}}" "pgrep -f gdbserver > /dev/null"; then
+        echo "  ❌  gdbserver failed to start. Check: ssh {{_pi}} cat /tmp/gdbserver.log"
+        exit 1
+    fi
+    echo "  ✅  gdbserver running on Pi:${REMOTE_PORT}"
+
+    # ── 5. SSH-туннель localhost:3333 → Pi:3333 ───────────────────────────────
+    echo "  🔗  Tunnel: localhost:${LOCAL_PORT} → {{_pi}}:${REMOTE_PORT}"
+    echo "  ℹ️   Keep this terminal open while debugging. Ctrl+C to stop."
+    echo ""
+    echo "GDBSERVER READY"
+
+    # -N: только туннель, без команды
+    # -o ExitOnForwardFailure=yes: упасть если порт занят
+    ssh -N \
+        -o ExitOnForwardFailure=yes \
+        -o ServerAliveInterval=5 \
+        -o ServerAliveCountMax=3 \
+        -L "${LOCAL_PORT}:localhost:${REMOTE_PORT}" \
+        "{{_pi}}"
+
+[doc('Остановить gdbserver на Pi')]
+[group('util')]
+gdbserver-stop:
+    ssh "{{_pi}}" "pkill -f gdbserver 2>/dev/null; true" || true
+    @echo "  ⏹️   gdbserver stopped"
+
+[doc('Установить gdbserver на Pi (один раз)')]
+[group('setup')]
+setup-gdbserver:
+    ssh "{{_pi}}" "sudo apt-get install -y gdbserver && gdbserver --version"
+    @echo "  ✅  gdbserver installed on Pi"
+[doc('Смотреть stdout отлаживаемой программы')]
+[group('util')]
+debug-output:
+    ssh "{{_pi}}" "tail -f /tmp/gdbserver.log"
 
 # just/pi.just — добавить recipe deploy-debug
 
@@ -315,14 +393,3 @@ deploy-debug:
     rsync -avz build/pi-debug/indicator "{{_pi}}:{{PI_DIR}}/indicator-debug"
     @echo "  ✅  Debug binary deployed"
 
-[doc('Запустить gdb с core-файлом на Pi')]
-[group('util')]
-gdb-core:
-    ssh "{{_pi}}" "cd {{PI_DIR}} && gdb indicator-debug core \
-        -batch \
-        -ex 'set print asm-demangle on' \
-        -ex 'bt full' \
-        -ex 'frame 0' \
-        -ex 'info registers' \
-        -ex 'x/4i \$$pc-8' \
-        2>&1 | head -60"

@@ -1,0 +1,38 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "🐛 Debug: indicator (Pi Zero W)",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/pi-debug/indicator",
+            "miDebuggerPath": "gdb-multiarch",
+            "miDebuggerServerAddress": "host.docker.internal:3333",
+            "stopAtConnect": true,
+            "cwd": "${workspaceFolder}",
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "ARM hard-float ABI",
+                    "text": "set architecture arm",
+                    "ignoreFailures": false
+                },
+                {
+                    "description": "Не предупреждать об отсутствующих .so символах",
+                    "text": "set auto-solib-add off",
+                    "ignoreFailures": true
+                },
+                {
+                    "description": "Pretty print",
+                    "text": "set print pretty on",
+                    "ignoreFailures": true
+                }
+            ],
+            "preLaunchTask": "gdbserver: start tunnel",
+            "externalConsole": false,
+            "logging": {
+                "engineLogging": false
+            }
+        }
+    ]
+}
