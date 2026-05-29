@@ -128,7 +128,6 @@ build-image:
         build-env/
     echo "  ✅  Docker image ready: indicator-build"
 
-
 [doc('Первичная настройка Pi: пакеты, ALSA, systemd units')]
 [group('setup')]
 setup-pi:
@@ -161,7 +160,7 @@ bootstrap:
 # ГРУППА: deploy — деплой на Pi
 # =============================================================================
 
-[doc('Задеплоить бинари + ресурсы + systemd units на Pi')]
+[doc('Задеплоить все бинари + скрипты + systemd units на Pi')]
 [group('deploy')]
 deploy:
     #!/usr/bin/env bash
@@ -172,11 +171,16 @@ deploy:
     fi
     echo "  📤  Deploying to {{_pi}}:{{PI_DIR}}..."
 
-    # Бинари
+    # Основные бинари
     rsync -avz --progress \
         "{{BUILD_DIR}}/pi/indicator" \
         "{{BUILD_DIR}}/pi/media_ingest" \
         "{{_pi}}:{{PI_DIR}}/"
+
+    # Диагностические утилиты
+    rsync -avz --progress \
+        "{{BUILD_DIR}}/pi/uart_rx_dump" \
+        "{{_pi}}:{{PI_DIR}}/tools/"
 
     # Скрипты
     rsync -avz --progress scripts/smoke_test.sh \
@@ -189,7 +193,7 @@ deploy:
 
     echo "  ✅  Deploy complete"
 
-[doc('Задеплоить только бинари (быстро, без ресурсов)')]
+[doc('Задеплоить только основные бинари: indicator + media_ingest (быстро)')]
 [group('deploy')]
 deploy-bin:
     #!/usr/bin/env bash
@@ -201,6 +205,22 @@ deploy-bin:
         "{{_pi}}:{{PI_DIR}}/"
     echo "  ✅  Binaries deployed"
 
+[doc('Задеплоить только диагностические утилиты (uart_rx_dump и др.)')]
+[group('deploy')]
+deploy-tools:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ ! -f "{{BUILD_DIR}}/pi/uart_rx_dump" ]; then
+        echo "  ❌  uart_rx_dump not found. Run: just build::pi-dump"
+        exit 1
+    fi
+    echo "  📤  Deploying tools to {{_pi}}:{{PI_DIR}}/tools/..."
+    ssh "{{_pi}}" "mkdir -p {{PI_DIR}}/tools"
+    rsync -avz --progress \
+        "{{BUILD_DIR}}/pi/uart_rx_dump" \
+        "{{_pi}}:{{PI_DIR}}/tools/"
+    echo "  ✅  Tools deployed"
+
 [doc('Задеплоить ресурсы (PNG, WAV, видео) на Pi')]
 [group('deploy')]
 deploy-resources resources_dir:
@@ -209,6 +229,15 @@ deploy-resources resources_dir:
     echo "  📤  Syncing resources from {{resources_dir}}..."
     rsync -avz --progress "{{resources_dir}}/" "{{_pi}}:{{PI_DIR}}/resources/"
     echo "  ✅  Resources deployed"
+
+[doc('Задеплоить звуки на Pi')]
+[group('deploy')]
+deploy-sounds sounds_dir:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "  📤  Syncing sounds from {{sounds_dir}}..."
+    rsync -avz --progress "{{sounds_dir}}/" "{{_pi}}:{{PI_DIR}}/sounds/"
+    echo "  ✅  Sounds deployed"
 
 # =============================================================================
 # ГРУППА: control — управление сервисами на Pi
@@ -255,6 +284,50 @@ logs-ingest:
 [group('logs')]
 logs-tail n="50":
     ssh "{{_pi}}" "journalctl -u indicator -u media-ingest -n {{n}} --no-pager"
+
+# =============================================================================
+# ГРУППА: diag — диагностика UART и железа
+# =============================================================================
+
+[doc('Запустить uart_rx_dump: остановить indicator, слушать фреймы, поднять обратно')]
+[group('diag')]
+dump:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    DUMP="{{PI_DIR}}/tools/uart_rx_dump"
+
+    # Проверить наличие утилиты
+    ssh "{{_pi}}" "test -f ${DUMP}" || {
+        echo "  ❌  uart_rx_dump not found. Run: just build::pi-dump && just pi::deploy-tools"
+        exit 1
+    }
+
+    echo "  ⏹️   Stopping indicator.service..."
+    ssh "{{_pi}}" "sudo systemctl stop indicator.service"
+
+    echo "  🔍  Starting uart_rx_dump (Ctrl+C to stop)..."
+    echo "  ─────────────────────────────────────────────"
+
+    # trap: поднять indicator обратно при выходе (Ctrl+C или ошибка)
+    trap 'echo ""; echo "  🔼  Restarting indicator.service..."; \
+          ssh "{{_pi}}" "sudo systemctl start indicator.service"; \
+          echo "  ✅  indicator restarted"' EXIT
+
+    ssh -t "{{_pi}}" "${DUMP} /dev/ttyAMA0 115200"
+
+[doc('Запустить uart_rx_dump без остановки indicator (только для наблюдения)')]
+[group('diag')]
+dump-passive:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    DUMP="{{PI_DIR}}/tools/uart_rx_dump"
+    ssh "{{_pi}}" "test -f ${DUMP}" || {
+        echo "  ❌  uart_rx_dump not found."
+        exit 1
+    }
+    echo "  ⚠️   indicator.service NOT stopped — порт занят, фреймы не придут"
+    echo "  ℹ️   Используй just pi::dump для корректной диагностики"
+    ssh -t "{{_pi}}" "${DUMP} /dev/ttyAMA0 115200"
 
 # =============================================================================
 # ГРУППА: util — утилиты
@@ -305,17 +378,9 @@ backup-image disk:
     echo "  ⚠️   Убедитесь что SD-карта вставлена и не примонтирована"
     sudo dd if="{{disk}}" bs=4m status=progress | gzip > "${OUT}"
     echo "  ✅  Image saved: ${OUT}"
+
 # =============================================================================
 # Remote GDB через SSH-туннель
-#
-# Схема:
-#   devcontainer (gdb-multiarch :3333) ─── SSH tunnel ─── Pi (gdbserver :3333)
-#
-# Порядок:
-#   1. just build::pi-debug   (devcontainer)
-#   2. just pi::deploy-debug  (хост или devcontainer)
-#   3. just pi::gdbserver-start  ← открывает туннель, ждёт подключения
-#   4. F5 в VSCode → launch.json "Debug: indicator (Pi Zero W)"
 # =============================================================================
 
 [doc('Открыть SSH-туннель и запустить gdbserver на Pi')]
@@ -328,40 +393,31 @@ gdbserver-start:
     LOCAL_PORT=3333
     REMOTE_PORT=3333
 
-    # ── 1. Проверить что бинарь есть ─────────────────────────────────────────
     echo "  🔌  Checking indicator-debug on Pi..."
     ssh "{{_pi}}" "test -f ${BINARY}" || {
         echo "  ❌  indicator-debug not found on Pi. Run: just pi::deploy-debug"
         exit 1
     }
 
-    # ── 2. Убить старый gdbserver если есть ──────────────────────────────────
-    # || true снаружи SSH: защищает от exit 255 если pkill не найден
-    # или gdbserver не запущен (pkill возвращает 1 при отсутствии процесса)
     echo "  🔌  Stopping any existing gdbserver..."
     ssh "{{_pi}}" "pkill -f gdbserver 2>/dev/null; true" || true
     sleep 1
 
-    # ── 3. Запустить gdbserver на Pi ─────────────────────────────────────────
     echo "  🚀  Starting gdbserver on Pi (port ${REMOTE_PORT})..."
     ssh "{{_pi}}" "nohup gdbserver :${REMOTE_PORT} ${BINARY} > /tmp/gdbserver.log 2>&1 &"
     sleep 1
 
-    # ── 4. Проверить что gdbserver запустился ─────────────────────────────────
     if ! ssh "{{_pi}}" "pgrep -f gdbserver > /dev/null"; then
         echo "  ❌  gdbserver failed to start. Check: ssh {{_pi}} cat /tmp/gdbserver.log"
         exit 1
     fi
     echo "  ✅  gdbserver running on Pi:${REMOTE_PORT}"
 
-    # ── 5. SSH-туннель localhost:3333 → Pi:3333 ───────────────────────────────
     echo "  🔗  Tunnel: localhost:${LOCAL_PORT} → {{_pi}}:${REMOTE_PORT}"
     echo "  ℹ️   Keep this terminal open while debugging. Ctrl+C to stop."
     echo ""
     echo "GDBSERVER READY"
 
-    # -N: только туннель, без команды
-    # -o ExitOnForwardFailure=yes: упасть если порт занят
     ssh -N \
         -o ExitOnForwardFailure=yes \
         -o ServerAliveInterval=5 \
@@ -380,16 +436,14 @@ gdbserver-stop:
 setup-gdbserver:
     ssh "{{_pi}}" "sudo apt-get install -y gdbserver && gdbserver --version"
     @echo "  ✅  gdbserver installed on Pi"
+
 [doc('Смотреть stdout отлаживаемой программы')]
 [group('util')]
 debug-output:
     ssh "{{_pi}}" "tail -f /tmp/gdbserver.log"
-
-# just/pi.just — добавить recipe deploy-debug
 
 [doc('Задеплоить debug-бинарь для анализа краша')]
 [group('deploy')]
 deploy-debug:
     rsync -avz build/pi-debug/indicator "{{_pi}}:{{PI_DIR}}/indicator-debug"
     @echo "  ✅  Debug binary deployed"
-

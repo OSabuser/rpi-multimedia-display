@@ -40,11 +40,12 @@ test-verbose: _configure-host
     cd "{{BUILD_DIR}}/host" && ctest -V
 
 # =============================================================================
-# ГРУППА: pi — кросс-компиляция под Raspberry Pi Zero 2W
+# ГРУППА: pi — кросс-компиляция под Raspberry Pi Zero W
 # =============================================================================
 
 [private]
 _configure-pi:
+    rm -rf "{{BUILD_DIR}}/pi"
     cmake -B "{{BUILD_DIR}}/pi" \
         -DCMAKE_TOOLCHAIN_FILE=cmake/Toolchain-RPiZeroW.cmake \
         -DCMAKE_BUILD_TYPE=Release \
@@ -52,13 +53,13 @@ _configure-pi:
         -DINDICATOR_BUILD_TESTS=OFF \
         -DINDICATOR_BUILD_INGEST=ON
 
-[doc('Кросс-компилировать indicator и media_ingest под Pi')]
+[doc('Кросс-компилировать все Pi-бинари: indicator, media_ingest, uart_rx_dump')]
 [group('pi')]
 pi: _configure-pi
     cmake --build "{{BUILD_DIR}}/pi" --parallel
     @echo "  ✅  Build complete: {{BUILD_DIR}}/pi/"
 
-[doc('Только indicator (без media_ingest)')]
+[doc('Только indicator (без media_ingest и tools)')]
 [group('pi')]
 pi-indicator: _configure-pi
     cmake --build "{{BUILD_DIR}}/pi" --target indicator --parallel
@@ -68,8 +69,14 @@ pi-indicator: _configure-pi
 pi-ingest: _configure-pi
     cmake --build "{{BUILD_DIR}}/pi" --target media_ingest --parallel
 
+[doc('Только uart_rx_dump (диагностическая утилита)')]
+[group('pi')]
+pi-dump: _configure-pi
+    cmake --build "{{BUILD_DIR}}/pi" --target uart_rx_dump --parallel
+    @echo "  ✅  uart_rx_dump ready: {{BUILD_DIR}}/pi/uart_rx_dump"
+
 [doc('Кросс-компиляция для Pi с debug-символами')]
-[group('build')]
+[group('pi')]
 pi-debug:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -82,6 +89,7 @@ pi-debug:
         -DINDICATOR_BUILD_INGEST=OFF
     cmake --build "build/pi-debug" --parallel
     echo "  ✅  Debug build: build/pi-debug/indicator"
+
 # =============================================================================
 # ГРУППА: quality — форматирование и статический анализ
 # =============================================================================
@@ -91,7 +99,10 @@ pi-debug:
 check-format:
     #!/usr/bin/env bash
     set -euo pipefail
-    files=$(find src platform -name '*.c' -o -name '*.h' | sort)
+    # src/ — domain, transport, main
+    # platform/ — DispmanX renderer
+    # tools/ — диагностические утилиты
+    files=$(find src platform tools -name '*.c' -o -name '*.h' | sort)
     if [ -z "$files" ]; then
         echo "  ⚠️  No C files found"
         exit 0
@@ -115,7 +126,7 @@ check-format:
 format:
     #!/usr/bin/env bash
     set -euo pipefail
-    files=$(find src platform -name '*.c' -o -name '*.h' | sort)
+    files=$(find src platform tools -name '*.c' -o -name '*.h' | sort)
     count=0
     while IFS= read -r f; do
         clang-format -i "$f"

@@ -95,6 +95,7 @@ endif()
 if(INDICATOR_PLATFORM_DISPMANX)
     add_subdirectory(platform/dispmanx)
     add_subdirectory(src_media_ingest)
+    add_subdirectory(tools)
 
     add_executable(indicator
         src/main.c
@@ -111,4 +112,6 @@ if(INDICATOR_PLATFORM_DISPMANX)
             pthread
     )
     apply_warnings(indicator)
+
+
 endif()

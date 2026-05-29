@@ -36,7 +36,7 @@ static int write_toml(const char *content)
  * Базовый нормальный путь
  * ──────────────────────────────────────────────────────────────────────────── */
 
-void test_config_basic(void)
+static void test_config_basic(void)
 {
     const char *toml = "[soundvolume]\n"
                        "name = \"Test\"\n"
@@ -77,7 +77,7 @@ void test_config_basic(void)
  * Значения percent
  * ──────────────────────────────────────────────────────────────────────────── */
 
-void test_config_sound_0_percent(void)
+static void test_config_sound_0_percent(void)
 {
     const char *toml = "[soundvolume]\ncurrent = \"0%\"\ndefault = \"50%\"\n"
                        "[musicvolume]\ncurrent = \"0%\"\ndefault = \"0%\"\n"
@@ -90,7 +90,7 @@ void test_config_sound_0_percent(void)
     TEST_ASSERT_EQUAL(0, cfg.sound_volume_percent);
 }
 
-void test_config_sound_100_percent(void)
+static void test_config_sound_100_percent(void)
 {
     const char *toml = "[soundvolume]\ncurrent = \"100%\"\ndefault = \"50%\"\n"
                        "[musicvolume]\ncurrent = \"0%\"\ndefault = \"0%\"\n"
@@ -107,7 +107,7 @@ void test_config_sound_100_percent(void)
  * Fallback: current пустой → используется default
  * ──────────────────────────────────────────────────────────────────────────── */
 
-void test_config_fallback_to_default(void)
+static void test_config_fallback_to_default(void)
 {
     /* current отсутствует — должен использоваться default */
     const char *toml = "[soundvolume]\ndefault = \"25%\"\n"
@@ -127,7 +127,7 @@ void test_config_fallback_to_default(void)
  * Файл не найден → дефолты
  * ──────────────────────────────────────────────────────────────────────────── */
 
-void test_config_file_not_found(void)
+static void test_config_file_not_found(void)
 {
     config_t cfg;
     int rc = config_load("/tmp/DOES_NOT_EXIST_indicator_config.toml", &cfg);
@@ -138,7 +138,7 @@ void test_config_file_not_found(void)
     TEST_ASSERT_EQUAL(CONFIG_DEFAULT_LOAD_IDX, cfg.load_capacity_idx);
 }
 
-void test_config_null_path(void)
+static void test_config_null_path(void)
 {
     config_t cfg;
     int rc = config_load(NULL, &cfg);
@@ -150,7 +150,7 @@ void test_config_null_path(void)
  * Файл с комментариями (как настоящий nku_scheme.toml)
  * ──────────────────────────────────────────────────────────────────────────── */
 
-void test_config_with_comments(void)
+static void test_config_with_comments(void)
 {
     const char *toml = "# nku_scheme.toml — конфиг устройства\n"
                        "\n"
@@ -194,7 +194,7 @@ void test_config_with_comments(void)
  * loadcapacity: current не в массиве → дефолтный индекс 0
  * ──────────────────────────────────────────────────────────────────────────── */
 
-void test_config_load_idx_current_not_in_array(void)
+static void test_config_load_idx_current_not_in_array(void)
 {
     const char *toml = "[soundvolume]\ncurrent = \"50%\"\ndefault = \"50%\"\n"
                        "[musicvolume]\ncurrent = \"0%\"\ndefault = \"0%\"\n"
@@ -214,7 +214,7 @@ void test_config_load_idx_current_not_in_array(void)
  * Симуляция реального nku_scheme.toml (soundvolume=50%, musicvolume=25%)
  * ──────────────────────────────────────────────────────────────────────────── */
 
-void test_config_realistic_toml(void)
+static void test_config_realistic_toml(void)
 {
     const char *toml =
         "[groupnumber]\n"

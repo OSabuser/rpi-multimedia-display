@@ -2,9 +2,9 @@
  * src/protocol/parser.h
  *
  * Двухуровневый парсер протокола MU:
- *   1. protocol_parse_frame()   — бинарный фрейм (sync/size/opcode/data/CRC/sync2)
- *   2. protocol_parse_payload() — текстовая нагрузка "#STM:L%d:R%d:A%d:S%d:M%d:E#"
- *
+ *   1. protocol_parse_frame()    — бинарный фрейм (sync/size/opcode/data/CRC/sync2)
+ *   2. protocol_parse_payload()  — payload opcode=0xDA: "#STM:L%d:R%d:A%d:S%d:M%d:E#"
+ *   3. protocol_parse_dispatch() — payload opcode=0xAA: "DISPATCH CALL/ANSWER/OFF\r\n"
  */
 
 #pragma once
@@ -14,84 +14,79 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* ─────────────────────────────────────────────────────────────────────────────
- * Константы бинарного протокола
- * ──────────────────────────────────────────────────────────────────────────── */
+/* ─── Константы бинарного протокола ──────────────────────────────────────── */
+
 #define MU_SYNC1                  0xAAu
 #define MU_SYNC2                  0xBBu
 #define MU_OPCODE_ELEVATOR_STATUS 0xDAu
 
-/** Накладные расходы фрейма: sync1(1)+size(1)+opcode(1)+crc_h(1)+crc_l(1)+sync2(1) */
+/**
+ * Опкод диспетчерской связи.
+ *
+ * Примечание: значение совпадает с MU_SYNC1 (0xAA), но занимает другую
+ * позицию в кадре (byte[2] = OPCODE, а не byte[0] = SYNC1),
+ * поэтому парсер работает корректно.
+ */
+#define MU_OPCODE_DISPATCH 0xAAu
+
+/** Накладные расходы: sync1(1)+size(1)+opcode(1)+crc_h(1)+crc_l(1)+sync2(1) */
 #define MU_FRAME_OVERHEAD 6u
 
-/** Максимальный размер поля data (по спецификации: 0..255) */
+/** Максимальный размер поля data */
 #define MU_DATA_MAX 255u
 
-/* ─────────────────────────────────────────────────────────────────────────────
- * Бинарный фрейм — результат protocol_parse_frame()
- * ──────────────────────────────────────────────────────────────────────────── */
-typedef struct
+/* ─── Бинарный фрейм ─────────────────────────────────────────────────────── */
+
+typedef struct mu_frame_s
 {
     uint8_t opcode;
-    uint8_t data[MU_DATA_MAX + 1U]; /* +1: null-терминатор для строковых операций */
+    uint8_t data[MU_DATA_MAX + 1U]; /* +1: null-терминатор */
     uint8_t data_len;
 } mu_frame_t;
 
-/* ─────────────────────────────────────────────────────────────────────────────
- * Коды результата парсинга
- * ──────────────────────────────────────────────────────────────────────────── */
-typedef enum
+/* ─── Коды результата парсинга ───────────────────────────────────────────── */
+
+typedef enum parse_result_e
 {
-    PARSE_OK = 0, /* успех                                          */
-    PARSE_NEED_MORE_DATA = 1, /* фрейм неполный, ждать следующих байт           */
-    PARSE_ERROR_SYNC1 = 2, /* байт sync1 (0xAA) не найден                   */
-    PARSE_ERROR_SYNC2 = 3, /* байт sync2 (0xBB) не совпал                   */
-    PARSE_ERROR_CRC   = 4, /* CRC не совпадает                               */
-    PARSE_ERROR_PAYLOAD = 5, /* неверный формат текстовой нагрузки             */
-    PARSE_ERROR_RANGE = 6 /* значение поля вне допустимого диапазона        */
+    PARSE_OK             = 0,
+    PARSE_NEED_MORE_DATA = 1,
+    PARSE_ERROR_SYNC1    = 2,
+    PARSE_ERROR_SYNC2    = 3,
+    PARSE_ERROR_CRC      = 4,
+    PARSE_ERROR_PAYLOAD  = 5,
+    PARSE_ERROR_RANGE    = 6
 } parse_result_t;
 
-/* ─────────────────────────────────────────────────────────────────────────────
- * API
- * ──────────────────────────────────────────────────────────────────────────── */
+/* ─── API ────────────────────────────────────────────────────────────────── */
 
 /**
- * protocol_crc16 — CRC-16/CCITT-FALSE
- *
- *   poly=0x1021, init=0xFFFF, RefIn=false, RefOut=false, XorOut=0x0000
- *   Контрольное значение ("123456789") = 0x29B1
- *
- * CRC вычисляется от: [opcode][data[0]..data[N-1]]
+ * CRC-16/CCITT-FALSE: poly=0x1021, init=0xFFFF, RefIn=false, RefOut=false.
+ * Контрольное значение ("123456789") = 0x29B1.
+ * Вычисляется от: [opcode][data[0]..data[N-1]].
  */
-uint16_t protocol_crc16(const uint8_t *data, size_t len);
+uint16_t protocol_crc16(const uint8_t *p_data, size_t len);
 
 /**
- * protocol_parse_frame — разобрать один бинарный фрейм из буфера.
- *
- * @param buf      буфер с входными байтами
- * @param len      число байт в буфере
- * @param out      [out] заполненный mu_frame_t при PARSE_OK
- * @param consumed [out] число байт, которые следует убрать из буфера
- *
- * Алгоритм:
- *   1. Сканировать до sync1=0xAA (весь мусор до него включается в consumed).
- *   2. Проверить достаточность буфера для полного фрейма.
- *   3. Проверить sync2.
- *   4. Вычислить и сравнить CRC16 (от [opcode || data]).
- *   5. Заполнить out, выставить consumed = start + frame_len.
- *
- * При PARSE_NEED_MORE_DATA: consumed = кол-во байт мусора до sync1.
- * При ошибках sync2/CRC: consumed = start+1 (продвинуться за плохой sync1).
- * При отсутствии sync1: consumed = len (весь буфер — мусор).
+ * Разобрать один бинарный фрейм из буфера.
+ * CRC: little-endian [LO][HI] — как в STM32 MU_tx_frame_create.
  */
-parse_result_t protocol_parse_frame(const uint8_t *buf, size_t len, mu_frame_t *out,
-                                    size_t *consumed);
+parse_result_t protocol_parse_frame(const uint8_t *p_buf, size_t len, mu_frame_t *p_out,
+                                    size_t *p_consumed);
 
 /**
- * protocol_parse_payload — разобрать текстовую нагрузку opcode=0xDA.
- *
- * Ожидаемый формат: "#STM:L%d:R%d:A%d:S%d:M%d:E#\r\n"
- *
- * Возвращает PARSE_OK или PARSE_ERROR_PAYLOAD / PARSE_ERROR_RANGE.
+ * Разобрать payload opcode=0xDA.
+ * Формат: "#STM:L%d:R%d:A%d:S%d:M%d:E#\r\n"
  */
-parse_result_t protocol_parse_payload(const mu_frame_t *frame, parsed_frame_t *out);
+parse_result_t protocol_parse_payload(const mu_frame_t *p_frame, parsed_frame_t *p_out);
+
+/**
+ * Разобрать payload opcode=0xAA (диспетчерская связь).
+ *
+ * Ожидаемые строки:
+ *   "DISPATCH CALL\r\n"   → DISPATCH_CALL
+ *   "DISPATCH ANSWER\r\n" → DISPATCH_ANSWER
+ *   "DISPATCH OFF\r\n"    → DISPATCH_OFF
+ *
+ * Возвращает PARSE_OK или PARSE_ERROR_PAYLOAD.
+ */
+parse_result_t protocol_parse_dispatch(const mu_frame_t *p_frame, dispatch_state_t *p_out);

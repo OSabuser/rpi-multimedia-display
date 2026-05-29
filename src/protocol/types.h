@@ -11,7 +11,7 @@
 /* ─────────────────────────────────────────────────────────────────────────────
  * Коды символов (поля L / R)
  * ──────────────────────────────────────────────────────────────────────────── */
-typedef enum
+typedef enum char_code_e
 {
     CHAR_0          = 0,
     CHAR_1          = 1,
@@ -30,9 +30,9 @@ typedef enum
     CHAR_E          = 14,
     CHAR_F          = 15,
     CHAR_BLANK      = 16,
-    CHAR_PI_CYR     = 17,
+    CHAR_PI_CYR     = 17, /* П (заглавная) */
     CHAR_P_LAT      = 18,
-    CHAR_pi_cyr     = 19,
+    CHAR_pi_cyr     = 19, /* п (строчная) — тоже подвальный этаж */
     CHAR_N_CYR      = 20,
     CHAR_U          = 21,
     CHAR_MINUS      = 22,
@@ -57,67 +57,59 @@ typedef enum
 
 /* ─────────────────────────────────────────────────────────────────────────────
  * Направление / стрелка (поле A)
- * Источник: arrows_state_t в STM32 (подтверждено)
  * ──────────────────────────────────────────────────────────────────────────── */
-typedef enum
+typedef enum arrow_e
 {
-    ARROW_NONE = 0, /* A_NO_ARROW    */
-    ARROW_UP   = 1, /* A_ARROW_UP    */
-    ARROW_DOWN = 2, /* A_ARROW_DOWN  */
-    ARROW_BOTH = 3, /* A_ARROWS_BOTH */
+    ARROW_NONE = 0,
+    ARROW_UP   = 1,
+    ARROW_DOWN = 2,
+    ARROW_BOTH = 3,
 
     ARROW_CODE_MAX = 3
 } arrow_t;
 
 /* ─────────────────────────────────────────────────────────────────────────────
- * Звуковые события (поле S)
- * Источник: s_code_t в STM32
- *
- * STM32 выставляет ненулевой код на один фрейм, затем сбрасывает в 0.
+ * Звуковые события (поле S, opcode=0xDA)
  * ──────────────────────────────────────────────────────────────────────────── */
-typedef enum
+typedef enum sound_e
 {
-    SOUND_NONE       = 0, /* нет события                          */
-    SOUND_DING       = 1, /* S_GONG        — прибытие, анонс этажа */
-    SOUND_UP         = 2, /* S_MOVING_UP   — движение вверх        */
-    SOUND_DOWN       = 3, /* S_MOVING_DOWN — движение вниз         */
-    SOUND_CLOSING    = 4, /* S_DOORS_CLOSE — двери закрываются     */
-    SOUND_OPENING    = 5, /* S_DOORS_OPEN  — двери открываются     */
-    SOUND_OVERLOAD   = 6, /* S_OVERLOAD    — перегрузка            */
-    SOUND_FIRE_ALARM = 7, /* S_FIRE_ALARM  — пожарная опасность    */
-    SOUND_DONT_WORK  = 8, /* S_DONT_WORK   — лифт не работает      */
-    SOUND_BUTTON     = 9, /* S_BUTTON      — нажатие кнопки        */
+    SOUND_NONE       = 0,
+    SOUND_DING       = 1,
+    SOUND_UP         = 2,
+    SOUND_DOWN       = 3,
+    SOUND_CLOSING    = 4,
+    SOUND_OPENING    = 5,
+    SOUND_OVERLOAD   = 6,
+    SOUND_FIRE_ALARM = 7,
+    SOUND_DONT_WORK  = 8,
+    SOUND_BUTTON     = 9,
 
     SOUND_CODE_MAX = 9
 } sound_t;
 
 /* ─────────────────────────────────────────────────────────────────────────────
- * Режим работы (поле M)
- * Источник: el_mode_t в STM32
- *
- * Значения НЕ образуют непрерывный диапазон (0–9, 100, 101, 255).
- * Для валидации использовать mode_is_valid(), не сравнение с MAX.
+ * Режим работы (поле M, opcode=0xDA)
+ * Значения НЕ образуют непрерывный диапазон.
  * ──────────────────────────────────────────────────────────────────────────── */
-typedef enum
+typedef enum indicator_mode_e
 {
-    MODE_NORMAL      = 0, /* M_NORMAL           — нормальная работа     */
-    MODE_FIRE_ALARM  = 1, /* M_FIRE_ALARM       — пожарная опасность    */
-    MODE_MALFUNCTION = 2, /* M_MALFUNCTION      — лифт не работает      */
-    MODE_LOADING     = 3, /* M_LOADING          — погрузка              */
-    MODE_OVERLOAD    = 4, /* M_OVERLOAD         — превышение нагрузки   */
-    MODE_SEIS_ALARM  = 5, /* M_SEIS_ALARM       — сейсмическая опасность*/
-    MODE_FIREMANS    = 6, /* M_FIREMANS         — перевозка пожарных    */
-    MODE_SERVICE     = 7, /* M_SERVISE          — на обслуживании       */
-    MODE_EVACUATION  = 8, /* M_EVACUATION       — эвакуация             */
-    MODE_UPS_MALFUNCTION = 9,   /* M_UPS_MALFUNCTION  — неисправность ИБП     */
-    MODE_DISPATCH_CALL   = 100, /* M_DISPATCH_CALL    — вызов диспетчера      */
-    MODE_DISPATCH_ANSWER = 101, /* M_DISPATCH_ANSWER  — ответ диспетчера      */
-    MODE_CONN_LOST       = 255  /* M_CONN_LOST        — потеря связи          */
-} inndicator_mode_t;
+    MODE_NORMAL          = 0,
+    MODE_FIRE_ALARM      = 1,
+    MODE_MALFUNCTION     = 2,
+    MODE_LOADING         = 3,
+    MODE_OVERLOAD        = 4,
+    MODE_SEIS_ALARM      = 5,
+    MODE_FIREMANS        = 6,
+    MODE_SERVICE         = 7,
+    MODE_EVACUATION      = 8,
+    MODE_UPS_MALFUNCTION = 9,
+    MODE_DISPATCH_CALL   = 100,
+    MODE_DISPATCH_ANSWER = 101,
+    MODE_CONN_LOST       = 255
+} indicator_mode_t;
 
 /**
  * mode_is_valid — проверить допустимость числового значения поля M.
- * Значения mode_t не образуют непрерывный диапазон — нельзя проверять <= MAX.
  */
 static inline int mode_is_valid(int v)
 {
@@ -125,13 +117,30 @@ static inline int mode_is_valid(int v)
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
- * Распарсенный фрейм — результат protocol_parse_payload()
+ * Состояние диспетчерской связи (opcode=0xAA)
+ *
+ * Приоритет выше любого mode_t из opcode=0xDA.
+ * Приходит строго однократно при изменении сигнальных входов.
+ *
+ * DISPATCH_OFF    → скрыть иконку диспетчера, вернуться к mode из 0xDA
+ * DISPATCH_CALL   → показать иконку вызова диспетчера
+ * DISPATCH_ANSWER → показать иконку ответа диспетчера
  * ──────────────────────────────────────────────────────────────────────────── */
-typedef struct
+typedef enum dispatch_state_e
+{
+    DISPATCH_OFF    = 0, /* нет активной диспетчерской связи */
+    DISPATCH_CALL   = 1, /* вызов диспетчера                 */
+    DISPATCH_ANSWER = 2  /* ответ диспетчера                 */
+} dispatch_state_t;
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Распарсенный фрейм — результат protocol_parse_payload() (opcode=0xDA)
+ * ──────────────────────────────────────────────────────────────────────────── */
+typedef struct parsed_frame_s
 {
     char_code_t left_char;
     char_code_t right_char;
     arrow_t arrow;
     sound_t sound;
-    inndicator_mode_t mode;
+    indicator_mode_t mode;
 } parsed_frame_t;

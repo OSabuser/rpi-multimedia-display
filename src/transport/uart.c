@@ -135,7 +135,7 @@ static uart_t *alloc_uart(int fd, frame_ready_cb_t p_cb, void *p_ctx)
 uart_t *uart_open(const char *p_device, baud_rate_t baud, uart_parity_t parity,
                   frame_ready_cb_t p_cb, void *p_ctx)
 {
-    if ((p_device == NULL) || (p_cb == NULL))
+    if ((p_device == NULL))
     {
         errno = EINVAL;
         return NULL;
@@ -264,7 +264,10 @@ int uart_process_rx(uart_t *p_u)
         switch (r)
         {
         case PARSE_OK:
-            p_u->cb(&frame, p_u->ctx);
+            if (p_u->cb != NULL)
+            {
+                p_u->cb(&frame, p_u->ctx);
+            }
             break;
 
         case PARSE_ERROR_SYNC1:

@@ -16,7 +16,7 @@ void tearDown(void)
 
 /* ── Вспомогательная: собрать parsed_frame_t ─────────────────────────────── */
 static parsed_frame_t make_frame(char_code_t l, char_code_t r, arrow_t a, sound_t s,
-                                 inndicator_mode_t m)
+                                 indicator_mode_t m)
 {
     parsed_frame_t f;
     f.left_char  = l;
@@ -31,7 +31,7 @@ static parsed_frame_t make_frame(char_code_t l, char_code_t r, arrow_t a, sound_
  * state_init
  * ──────────────────────────────────────────────────────────────────────────── */
 
-void test_state_init_not_initialized(void)
+static void test_state_init_not_initialized(void)
 {
     indicator_state_t st;
     state_init(&st);
@@ -42,7 +42,7 @@ void test_state_init_not_initialized(void)
  * Первый фрейм
  * ──────────────────────────────────────────────────────────────────────────── */
 
-void test_first_frame_all_flags_set(void)
+static void test_first_frame_all_flags_set(void)
 {
     indicator_state_t st;
     state_init(&st);
@@ -57,7 +57,7 @@ void test_first_frame_all_flags_set(void)
     TEST_ASSERT_EQUAL(1, r.sound_triggered);
 }
 
-void test_first_frame_state_stored(void)
+static void test_first_frame_state_stored(void)
 {
     indicator_state_t st;
     state_init(&st);
@@ -72,7 +72,7 @@ void test_first_frame_state_stored(void)
     TEST_ASSERT_EQUAL(1, st.initialized);
 }
 
-void test_first_frame_sound_none_not_triggered(void)
+static void test_first_frame_sound_none_not_triggered(void)
 {
     indicator_state_t st;
     state_init(&st);
@@ -88,7 +88,7 @@ void test_first_frame_sound_none_not_triggered(void)
  * Идентичный второй фрейм — никаких изменений
  * ──────────────────────────────────────────────────────────────────────────── */
 
-void test_identical_second_frame_no_changes(void)
+static void test_identical_second_frame_no_changes(void)
 {
     indicator_state_t st;
     state_init(&st);
@@ -108,7 +108,7 @@ void test_identical_second_frame_no_changes(void)
  * Изменение отдельных полей
  * ──────────────────────────────────────────────────────────────────────────── */
 
-void test_floor_change_only(void)
+static void test_floor_change_only(void)
 {
     indicator_state_t st;
     state_init(&st);
@@ -124,7 +124,7 @@ void test_floor_change_only(void)
     TEST_ASSERT_EQUAL(0, r.mode_changed);
 }
 
-void test_arrow_change_only(void)
+static void test_arrow_change_only(void)
 {
     indicator_state_t st;
     state_init(&st);
@@ -141,7 +141,7 @@ void test_arrow_change_only(void)
     TEST_ASSERT_EQUAL(ARROW_DOWN, st.arrow);
 }
 
-void test_mode_change_only(void)
+static void test_mode_change_only(void)
 {
     indicator_state_t st;
     state_init(&st);
@@ -162,7 +162,7 @@ void test_mode_change_only(void)
  * Sound — edge-triggered
  * ──────────────────────────────────────────────────────────────────────────── */
 
-void test_sound_edge_triggered(void)
+static void test_sound_edge_triggered(void)
 {
     indicator_state_t st;
     state_init(&st);
@@ -181,7 +181,7 @@ void test_sound_edge_triggered(void)
     TEST_ASSERT_EQUAL(0, r2.sound_triggered);
 }
 
-void test_sound_not_stored_in_state(void)
+static void test_sound_not_stored_in_state(void)
 {
     /* State не хранит sound — только current floor/arrow/mode */
     indicator_state_t st;
@@ -196,6 +196,55 @@ void test_sound_not_stored_in_state(void)
     TEST_ASSERT_EQUAL(0, r.arrow_changed);
     /* sound_triggered выставлен, потому что в фрейме SOUND_DING */
     TEST_ASSERT_EQUAL(1, r.sound_triggered);
+}
+
+static void test_dispatch_initial_off(void)
+{
+    indicator_state_t s;
+    state_init(&s);
+    TEST_ASSERT_EQUAL(DISPATCH_OFF, s.active_dispatch);
+}
+
+static void test_dispatch_call_changes_state(void)
+{
+    indicator_state_t s;
+    state_init(&s);
+    state_update_result_t r = state_apply_dispatch(&s, DISPATCH_CALL);
+    TEST_ASSERT_EQUAL_INT(1, r.dispatch_changed);
+    TEST_ASSERT_EQUAL(DISPATCH_CALL, s.active_dispatch);
+    /* Остальные флаги не затронуты */
+    TEST_ASSERT_EQUAL_INT(0, r.floor_changed);
+    TEST_ASSERT_EQUAL_INT(0, r.sound_triggered);
+}
+
+static void test_dispatch_same_value_no_change(void)
+{
+    indicator_state_t s;
+    state_init(&s);
+    state_apply_dispatch(&s, DISPATCH_CALL);
+    /* Второй вызов с тем же значением — нет изменения */
+    state_update_result_t r = state_apply_dispatch(&s, DISPATCH_CALL);
+    TEST_ASSERT_EQUAL_INT(0, r.dispatch_changed);
+}
+
+static void test_dispatch_off_clears_state(void)
+{
+    indicator_state_t s;
+    state_init(&s);
+    state_apply_dispatch(&s, DISPATCH_ANSWER);
+    state_update_result_t r = state_apply_dispatch(&s, DISPATCH_OFF);
+    TEST_ASSERT_EQUAL_INT(1, r.dispatch_changed);
+    TEST_ASSERT_EQUAL(DISPATCH_OFF, s.active_dispatch);
+}
+
+static void test_dispatch_independent_of_elevator_state(void)
+{
+    /* dispatch не влияет на initialized / floor / arrow / mode */
+    indicator_state_t s;
+    state_init(&s);
+    TEST_ASSERT_EQUAL_INT(0, s.initialized);
+    state_apply_dispatch(&s, DISPATCH_CALL);
+    TEST_ASSERT_EQUAL_INT(0, s.initialized); /* не изменился */
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -219,6 +268,12 @@ int main(void)
 
     RUN_TEST(test_sound_edge_triggered);
     RUN_TEST(test_sound_not_stored_in_state);
+
+    RUN_TEST(test_dispatch_initial_off);
+    RUN_TEST(test_dispatch_call_changes_state);
+    RUN_TEST(test_dispatch_same_value_no_change);
+    RUN_TEST(test_dispatch_off_clears_state);
+    RUN_TEST(test_dispatch_independent_of_elevator_state);
 
     return UNITY_END();
 }

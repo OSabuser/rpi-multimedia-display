@@ -2,19 +2,19 @@
  * @file test_uart.c
  * @brief Unit-тесты для uart_process_rx() через pipe().
  *
- * Зачем pipe(), а не реальный UART:
- *   uart_process_rx() вызывает только read() — ему не важно, откуда fd.
- *   pipe() даёт детерминированный контроль над байтами без железа.
+ * Cleanup через tearDown():
+ *   Unity вызывает tearDown() после каждого теста независимо от результата,
+ *   включая случаи когда TEST_ASSERT делает longjmp. Поэтому ресурсы
+ *   (uart_t, pipe fd) хранятся в статических переменных модуля и
+ *   освобождаются в tearDown() — не в теле теста.
  *
- * Что тестируется:
- *   1. Валидный фрейм → коллбэк вызван с правильными данными.
- *   2. Мусор перед фреймом → игнорируется, коллбэк всё равно вызван.
- *   3. Плохой CRC → коллбэк не вызван.
- *   4. Разбитый фрейм (два write) → коллбэк вызван после второго write.
- *   5. Два фрейма подряд → два вызова коллбэка.
+ * CRC byte order:
+ *   build_frame() использует little-endian [LO][HI] — как STM32 MU_tx_frame_create:
+ *     txFrame[DATA+len]   = crc;       // LO первым
+ *     txFrame[DATA+len+1] = crc >> 8;  // HI вторым
  */
 
-#define _GNU_SOURCE /* pipe2, O_NONBLOCK */
+#define _GNU_SOURCE
 
 #include "protocol/parser.h"
 #include "transport/uart.h"
@@ -25,9 +25,14 @@
 #include <string.h>
 #include <unistd.h>
 
+/* ─── Ресурсы теста — освобождаются в tearDown() ────────────────────────── */
+
+static uart_t *s_uart = NULL;
+static int s_wr_fd    = -1;
+
 /* ─── Захват вызовов коллбэка ────────────────────────────────────────────── */
 
-#define MAX_CAPTURED_FRAMES 4
+#define MAX_CAPTURED_FRAMES 4U
 
 typedef struct capture_s
 {
@@ -35,30 +40,30 @@ typedef struct capture_s
     mu_frame_t frames[MAX_CAPTURED_FRAMES];
 } capture_t;
 
+static capture_t s_cap;
+
 static void capture_cb(const mu_frame_t *p_frame, void *p_ctx)
 {
     capture_t *p_cap = (capture_t *) p_ctx;
-    if (p_cap->call_count < MAX_CAPTURED_FRAMES)
+    if (p_cap->call_count < (int) MAX_CAPTURED_FRAMES)
     {
         p_cap->frames[p_cap->call_count] = *p_frame;
     }
     p_cap->call_count++;
 }
 
-/* ─── Построитель тестовых фреймов ───────────────────────────────────────── */
+/* ─── Построитель фреймов ────────────────────────────────────────────────── */
 
 /**
- * Сконструировать бинарный фрейм в p_buf.
- * CRC считается от [opcode || data] — как в protocol_crc16().
- *
- * @return Число записанных байт.
+ * CRC little-endian: [LO][HI] — как STM32 MU_tx_frame_create.
+ *   txFrame[DATA+len]   = crc;       // LO первым
+ *   txFrame[DATA+len+1] = crc >> 8;  // HI вторым
  */
 static size_t build_frame(uint8_t *p_buf, uint8_t opcode, const uint8_t *p_data, uint8_t data_len)
 {
-    /* CRC от [opcode][data...] */
     uint8_t crc_src[MU_DATA_MAX + 1U];
-    crc_src[0] = opcode;
-    (void) memcpy(&crc_src[1], p_data, data_len);
+    crc_src[0U] = opcode;
+    (void) memcpy(&crc_src[1U], p_data, data_len);
     uint16_t crc = protocol_crc16(crc_src, (size_t) data_len + 1U);
 
     size_t idx   = 0U;
@@ -67,185 +72,148 @@ static size_t build_frame(uint8_t *p_buf, uint8_t opcode, const uint8_t *p_data,
     p_buf[idx++] = opcode;
     (void) memcpy(&p_buf[idx], p_data, data_len);
     idx += data_len;
-    p_buf[idx++] = (uint8_t) (crc >> 8U);
-    p_buf[idx++] = (uint8_t) (crc & 0xFFU);
+    p_buf[idx++] = (uint8_t) (crc & 0xFFU);         /* LO — первым */
+    p_buf[idx++] = (uint8_t) ((crc >> 8U) & 0xFFU); /* HI — вторым */
     p_buf[idx++] = MU_SYNC2;
     return idx;
 }
 
-/* ─── Вспомогательные функции теста ─────────────────────────────────────── */
+/* ─── Инициализация теста ────────────────────────────────────────────────── */
 
-/** Открыть pipe, выставить read-конец в non-blocking. */
-static void open_test_pipe(int *p_rd, int *p_wr)
+static void open_test_pipe_and_uart(void)
 {
     int fds[2];
     TEST_ASSERT_EQUAL_INT(0, pipe(fds));
     TEST_ASSERT_EQUAL_INT(0, fcntl(fds[0], F_SETFL, O_NONBLOCK));
-    *p_rd = fds[0];
-    *p_wr = fds[1];
+    s_wr_fd = fds[1];
+    s_uart  = uart_wrap_fd(fds[0], capture_cb, &s_cap);
+    TEST_ASSERT_NOT_NULL(s_uart);
 }
-
-/** Типичная текстовая нагрузка для opcode 0xDA. */
-static const uint8_t PAYLOAD_FLOOR5[] = "#STM:L16:R5:A1:S1:M0:E#\r\n";
-static const uint8_t PAYLOAD_FLOOR6[] = "#STM:L16:R6:A1:S0:M0:E#\r\n";
 
 /* ─── setUp / tearDown ───────────────────────────────────────────────────── */
 
 void setUp(void)
-{ /* ничего */
+{
+    s_uart  = NULL;
+    s_wr_fd = -1;
+    (void) memset(&s_cap, 0, sizeof(s_cap));
 }
+
+/**
+ * Вызывается Unity после каждого теста — включая упавшие по TEST_ASSERT.
+ * Гарантирует освобождение ресурсов даже при longjmp.
+ */
 void tearDown(void)
-{ /* ничего */
+{
+    /* uart_close безопасен при NULL */
+    uart_close(s_uart);
+    s_uart = NULL;
+
+    if (s_wr_fd >= 0)
+    {
+        (void) close(s_wr_fd);
+        s_wr_fd = -1;
+    }
 }
+
+/* ─── Типичные payload ───────────────────────────────────────────────────── */
+
+static const uint8_t PAYLOAD_FLOOR5[] = "#STM:L16:R5:A1:S1:M0:E#\r\n";
+static const uint8_t PAYLOAD_FLOOR6[] = "#STM:L16:R6:A1:S0:M0:E#\r\n";
 
 /* ─── Тесты ──────────────────────────────────────────────────────────────── */
 
 /**
  * Тест 1: Валидный фрейм → коллбэк вызван ровно один раз.
- * Проверяем opcode, data_len, содержимое data.
  */
-void test_valid_frame_calls_callback(void)
+static void test_valid_frame_calls_callback(void)
 {
-    int rd, wr;
-    open_test_pipe(&rd, &wr);
+    open_test_pipe_and_uart();
 
-    capture_t cap;
-    (void) memset(&cap, 0, sizeof(cap));
-
-    uart_t *p_u = uart_wrap_fd(rd, capture_cb, &cap);
-    TEST_ASSERT_NOT_NULL(p_u);
-
-    uint8_t buf[MU_DATA_MAX + MU_FRAME_OVERHEAD + 1U];
-    uint8_t data_len = (uint8_t) (sizeof(PAYLOAD_FLOOR5) - 1U); /* без '\0' */
-    size_t frame_len = build_frame(buf, MU_OPCODE_ELEVATOR_STATUS, PAYLOAD_FLOOR5, data_len);
-
-    TEST_ASSERT_EQUAL_INT((int) frame_len, (int) write(wr, buf, frame_len));
-    TEST_ASSERT_EQUAL_INT(0, uart_process_rx(p_u));
-
-    TEST_ASSERT_EQUAL_INT(1, cap.call_count);
-    TEST_ASSERT_EQUAL_UINT8(MU_OPCODE_ELEVATOR_STATUS, cap.frames[0].opcode);
-    TEST_ASSERT_EQUAL_UINT8(data_len, cap.frames[0].data_len);
-    TEST_ASSERT_EQUAL_MEMORY(PAYLOAD_FLOOR5, cap.frames[0].data, data_len);
-
-    uart_close(p_u);
-    (void) close(wr);
-}
-
-/**
- * Тест 2: Мусор перед фреймом → парсер ищет sync1, коллбэк вызван.
- */
-void test_junk_before_frame_is_skipped(void)
-{
-    int rd, wr;
-    open_test_pipe(&rd, &wr);
-
-    capture_t cap;
-    (void) memset(&cap, 0, sizeof(cap));
-
-    uart_t *p_u = uart_wrap_fd(rd, capture_cb, &cap);
-    TEST_ASSERT_NOT_NULL(p_u);
-
-    /* Сначала пишем мусор — байты, не содержащие 0xAA */
-    const uint8_t JUNK[] = { 0x01U, 0x02U, 0x03U, 0xBBU, 0xCCU };
-    TEST_ASSERT_EQUAL_INT((int) sizeof(JUNK), (int) write(wr, JUNK, sizeof(JUNK)));
-
-    /* Затем — валидный фрейм */
     uint8_t buf[MU_DATA_MAX + MU_FRAME_OVERHEAD + 1U];
     uint8_t data_len = (uint8_t) (sizeof(PAYLOAD_FLOOR5) - 1U);
     size_t frame_len = build_frame(buf, MU_OPCODE_ELEVATOR_STATUS, PAYLOAD_FLOOR5, data_len);
-    TEST_ASSERT_EQUAL_INT((int) frame_len, (int) write(wr, buf, frame_len));
 
-    TEST_ASSERT_EQUAL_INT(0, uart_process_rx(p_u));
+    TEST_ASSERT_EQUAL_INT((int) frame_len, (int) write(s_wr_fd, buf, frame_len));
+    TEST_ASSERT_EQUAL_INT(0, uart_process_rx(s_uart));
 
-    TEST_ASSERT_EQUAL_INT(1, cap.call_count);
-    TEST_ASSERT_EQUAL_UINT8(MU_OPCODE_ELEVATOR_STATUS, cap.frames[0].opcode);
+    TEST_ASSERT_EQUAL_INT(1, s_cap.call_count);
+    TEST_ASSERT_EQUAL_UINT8(MU_OPCODE_ELEVATOR_STATUS, s_cap.frames[0].opcode);
+    TEST_ASSERT_EQUAL_UINT8(data_len, s_cap.frames[0].data_len);
+    TEST_ASSERT_EQUAL_MEMORY(PAYLOAD_FLOOR5, s_cap.frames[0].data, data_len);
+}
 
-    uart_close(p_u);
-    (void) close(wr);
+/**
+ * Тест 2: Мусор перед фреймом → игнорируется, коллбэк вызван.
+ */
+static void test_junk_before_frame_is_skipped(void)
+{
+    open_test_pipe_and_uart();
+
+    const uint8_t JUNK[] = { 0x01U, 0x02U, 0x03U, 0xBBU, 0xCCU };
+    TEST_ASSERT_EQUAL_INT((int) sizeof(JUNK), (int) write(s_wr_fd, JUNK, sizeof(JUNK)));
+
+    uint8_t buf[MU_DATA_MAX + MU_FRAME_OVERHEAD + 1U];
+    uint8_t data_len = (uint8_t) (sizeof(PAYLOAD_FLOOR5) - 1U);
+    size_t frame_len = build_frame(buf, MU_OPCODE_ELEVATOR_STATUS, PAYLOAD_FLOOR5, data_len);
+    TEST_ASSERT_EQUAL_INT((int) frame_len, (int) write(s_wr_fd, buf, frame_len));
+
+    TEST_ASSERT_EQUAL_INT(0, uart_process_rx(s_uart));
+
+    TEST_ASSERT_EQUAL_INT(1, s_cap.call_count);
+    TEST_ASSERT_EQUAL_UINT8(MU_OPCODE_ELEVATOR_STATUS, s_cap.frames[0].opcode);
 }
 
 /**
  * Тест 3: Неверный CRC → коллбэк не вызван.
  */
-void test_bad_crc_drops_frame(void)
+static void test_bad_crc_drops_frame(void)
 {
-    int rd, wr;
-    open_test_pipe(&rd, &wr);
-
-    capture_t cap;
-    (void) memset(&cap, 0, sizeof(cap));
-
-    uart_t *p_u = uart_wrap_fd(rd, capture_cb, &cap);
-    TEST_ASSERT_NOT_NULL(p_u);
+    open_test_pipe_and_uart();
 
     uint8_t buf[MU_DATA_MAX + MU_FRAME_OVERHEAD + 1U];
     uint8_t data_len = (uint8_t) (sizeof(PAYLOAD_FLOOR5) - 1U);
     size_t frame_len = build_frame(buf, MU_OPCODE_ELEVATOR_STATUS, PAYLOAD_FLOOR5, data_len);
 
-    /* Испортить CRC: инвертировать старший байт */
-    size_t crc_h_idx = frame_len - 3U; /* [...][crc_h][crc_l][0xBB] */
-    buf[crc_h_idx] ^= 0xFFU;
+    /* Испортить LO-байт CRC: buf[frame_len-3] = CRC_LO */
+    buf[frame_len - 3U] ^= 0xFFU;
 
-    TEST_ASSERT_EQUAL_INT((int) frame_len, (int) write(wr, buf, frame_len));
-    TEST_ASSERT_EQUAL_INT(0, uart_process_rx(p_u));
+    TEST_ASSERT_EQUAL_INT((int) frame_len, (int) write(s_wr_fd, buf, frame_len));
+    TEST_ASSERT_EQUAL_INT(0, uart_process_rx(s_uart));
 
-    TEST_ASSERT_EQUAL_INT(0, cap.call_count);
-
-    uart_close(p_u);
-    (void) close(wr);
+    TEST_ASSERT_EQUAL_INT(0, s_cap.call_count);
 }
 
 /**
- * Тест 4: Фрейм разбит на две части → коллбэк вызван только после второго write.
- * Моделирует реальную ситуацию, когда байты приходят порциями через UART.
+ * Тест 4: Фрейм разбит на две части → коллбэк только после второго write.
  */
-void test_partial_frame_reassembly(void)
+static void test_partial_frame_reassembly(void)
 {
-    int rd, wr;
-    open_test_pipe(&rd, &wr);
-
-    capture_t cap;
-    (void) memset(&cap, 0, sizeof(cap));
-
-    uart_t *p_u = uart_wrap_fd(rd, capture_cb, &cap);
-    TEST_ASSERT_NOT_NULL(p_u);
+    open_test_pipe_and_uart();
 
     uint8_t buf[MU_DATA_MAX + MU_FRAME_OVERHEAD + 1U];
     uint8_t data_len = (uint8_t) (sizeof(PAYLOAD_FLOOR5) - 1U);
     size_t frame_len = build_frame(buf, MU_OPCODE_ELEVATOR_STATUS, PAYLOAD_FLOOR5, data_len);
 
-    /* Первая половина: sync1 + size + opcode + часть данных */
     size_t half = frame_len / 2U;
-    TEST_ASSERT_EQUAL_INT((int) half, (int) write(wr, buf, half));
-    TEST_ASSERT_EQUAL_INT(0, uart_process_rx(p_u));
+    TEST_ASSERT_EQUAL_INT((int) half, (int) write(s_wr_fd, buf, half));
+    TEST_ASSERT_EQUAL_INT(0, uart_process_rx(s_uart));
+    TEST_ASSERT_EQUAL_INT(0, s_cap.call_count); /* ещё не полный фрейм */
 
-    /* Коллбэк ещё не должен был сработать */
-    TEST_ASSERT_EQUAL_INT(0, cap.call_count);
+    TEST_ASSERT_EQUAL_INT((int) (frame_len - half),
+                          (int) write(s_wr_fd, &buf[half], frame_len - half));
+    TEST_ASSERT_EQUAL_INT(0, uart_process_rx(s_uart));
 
-    /* Вторая половина */
-    TEST_ASSERT_EQUAL_INT((int) (frame_len - half), (int) write(wr, &buf[half], frame_len - half));
-    TEST_ASSERT_EQUAL_INT(0, uart_process_rx(p_u));
-
-    TEST_ASSERT_EQUAL_INT(1, cap.call_count);
-    TEST_ASSERT_EQUAL_UINT8(data_len, cap.frames[0].data_len);
-
-    uart_close(p_u);
-    (void) close(wr);
+    TEST_ASSERT_EQUAL_INT(1, s_cap.call_count);
+    TEST_ASSERT_EQUAL_UINT8(data_len, s_cap.frames[0].data_len);
 }
 
 /**
- * Тест 5: Два фрейма в одном write → два вызова коллбэка.
+ * Тест 5: Два фрейма подряд → два вызова коллбэка.
  */
-void test_two_consecutive_frames(void)
+static void test_two_consecutive_frames(void)
 {
-    int rd, wr;
-    open_test_pipe(&rd, &wr);
-
-    capture_t cap;
-    (void) memset(&cap, 0, sizeof(cap));
-
-    uart_t *p_u = uart_wrap_fd(rd, capture_cb, &cap);
-    TEST_ASSERT_NOT_NULL(p_u);
+    open_test_pipe_and_uart();
 
     uint8_t buf[2U * (MU_DATA_MAX + MU_FRAME_OVERHEAD + 1U)];
     uint8_t data_len1 = (uint8_t) (sizeof(PAYLOAD_FLOOR5) - 1U);
@@ -255,21 +223,14 @@ void test_two_consecutive_frames(void)
         build_frame(&buf[frame_len1], MU_OPCODE_ELEVATOR_STATUS, PAYLOAD_FLOOR6, data_len2);
     size_t total = frame_len1 + frame_len2;
 
-    TEST_ASSERT_EQUAL_INT((int) total, (int) write(wr, buf, total));
-    TEST_ASSERT_EQUAL_INT(0, uart_process_rx(p_u));
+    TEST_ASSERT_EQUAL_INT((int) total, (int) write(s_wr_fd, buf, total));
+    TEST_ASSERT_EQUAL_INT(0, uart_process_rx(s_uart));
 
-    TEST_ASSERT_EQUAL_INT(2, cap.call_count);
-
-    /* Первый фрейм — PAYLOAD_FLOOR5 */
-    TEST_ASSERT_EQUAL_UINT8(data_len1, cap.frames[0].data_len);
-    TEST_ASSERT_EQUAL_MEMORY(PAYLOAD_FLOOR5, cap.frames[0].data, data_len1);
-
-    /* Второй фрейм — PAYLOAD_FLOOR6 */
-    TEST_ASSERT_EQUAL_UINT8(data_len2, cap.frames[1].data_len);
-    TEST_ASSERT_EQUAL_MEMORY(PAYLOAD_FLOOR6, cap.frames[1].data, data_len2);
-
-    uart_close(p_u);
-    (void) close(wr);
+    TEST_ASSERT_EQUAL_INT(2, s_cap.call_count);
+    TEST_ASSERT_EQUAL_UINT8(data_len1, s_cap.frames[0].data_len);
+    TEST_ASSERT_EQUAL_MEMORY(PAYLOAD_FLOOR5, s_cap.frames[0].data, data_len1);
+    TEST_ASSERT_EQUAL_UINT8(data_len2, s_cap.frames[1].data_len);
+    TEST_ASSERT_EQUAL_MEMORY(PAYLOAD_FLOOR6, s_cap.frames[1].data, data_len2);
 }
 
 /* ─── Точка входа ────────────────────────────────────────────────────────── */

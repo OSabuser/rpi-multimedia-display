@@ -60,3 +60,20 @@ state_update_result_t state_apply_frame(indicator_state_t *state, const parsed_f
 
     return result;
 }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * state_apply_dispatch — добавить в конец state.c
+ * ──────────────────────────────────────────────────────────────────────────── */
+state_update_result_t state_apply_dispatch(indicator_state_t *p_state, dispatch_state_t dispatch)
+{
+    state_update_result_t result;
+    (void) memset(&result, 0, sizeof(result));
+
+    if (p_state->active_dispatch != dispatch)
+    {
+        p_state->active_dispatch = dispatch;
+        result.dispatch_changed  = 1;
+    }
+
+    return result;
+}

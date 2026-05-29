@@ -3,55 +3,75 @@
  *
  * Машина состояний индикатора.
  *
- * Хранит: left_char, right_char, arrow, mode.
- * НЕ хранит: sound — он edge-triggered (STM32 сбрасывает в 0 сразу после события).
+ * Хранит два независимых контекста:
  *
- * state_apply_frame() возвращает битовую маску изменений; main.c решает,
- * что обновлять на дисплее и какой звук воспроизвести.
+ *   1. Состояние лифта (из opcode=0xDA):
+ *      left_char, right_char, arrow, mode
+ *
+ *   2. Состояние диспетчерской связи (из opcode=0xAA):
+ *      active_dispatch
+ *
+ * Приоритет отображения:
+ *   active_dispatch != DISPATCH_OFF → показывать dispatch-иконку,
+ *                                     игнорировать mode из 0xDA для рендера
+ *   active_dispatch == DISPATCH_OFF → показывать mode из 0xDA
+ *
+ * Решение о том что именно рендерить принимает main.c на основе флагов
+ * state_update_result_t — state.c только фиксирует изменения.
  */
 
 #pragma once
 
 #include "protocol/types.h"
 
-/* ─────────────────────────────────────────────────────────────────────────────
- * Состояние индикатора
- * ──────────────────────────────────────────────────────────────────────────── */
-typedef struct
+/* ─── Состояние индикатора ────────────────────────────────────────────────── */
+
+typedef struct indicator_state_s
 {
-    char_code_t left_char;  /* текущий левый символ          */
-    char_code_t right_char; /* текущий правый символ         */
-    arrow_t arrow;          /* текущее направление           */
-    inndicator_mode_t mode; /* текущий режим                 */
-    int initialized;        /* 0 = ещё не получали ни одного фрейма */
+    /* Состояние лифта (opcode=0xDA) */
+    char_code_t left_char;
+    char_code_t right_char;
+    arrow_t arrow;
+    indicator_mode_t mode;
+    int initialized; /* 0 = ни одного 0xDA фрейма не получено */
+
+    /* Состояние диспетчерской связи (opcode=0xAA) */
+    dispatch_state_t active_dispatch;
 } indicator_state_t;
 
-/* ─────────────────────────────────────────────────────────────────────────────
- * Результат применения фрейма
- * ──────────────────────────────────────────────────────────────────────────── */
-typedef struct
+/* ─── Результат применения фрейма ────────────────────────────────────────── */
+
+typedef struct state_update_result_s
 {
+    /* Изменения от opcode=0xDA */
     int floor_changed;   /* left_char или right_char изменились */
     int arrow_changed;   /* arrow изменился                     */
     int mode_changed;    /* mode изменился                      */
     int sound_triggered; /* sound != SOUND_NONE (edge event)    */
-    int first_frame;     /* первый фрейм после инициализации    */
+    int first_frame;     /* первый 0xDA фрейм после старта      */
+
+    /* Изменения от opcode=0xAA */
+    int dispatch_changed; /* active_dispatch изменился           */
 } state_update_result_t;
 
-/* ─────────────────────────────────────────────────────────────────────────────
- * API
- * ──────────────────────────────────────────────────────────────────────────── */
+/* ─── API ────────────────────────────────────────────────────────────────── */
 
-/** Инициализировать состояние (обнулить, initialized=0). */
-void state_init(indicator_state_t *state);
+/** Инициализировать состояние. */
+void state_init(indicator_state_t *p_state);
 
 /**
- * state_apply_frame — применить новый фрейм к состоянию.
+ * state_apply_frame — применить фрейм opcode=0xDA к состоянию лифта.
  *
- * При первом вызове (initialized=0): все флаги изменения = 1, first_frame = 1.
- * При последующих: флаг выставляется только если значение действительно изменилось.
- * sound_triggered всегда отражает frame->sound != SOUND_NONE.
- *
- * Чистая функция (без побочных эффектов кроме изменения *state).
+ * При первом вызове (initialized=0): все флаги = 1, first_frame = 1.
+ * При последующих: флаг только если значение изменилось.
+ * sound_triggered всегда = (frame->sound != SOUND_NONE).
  */
-state_update_result_t state_apply_frame(indicator_state_t *state, const parsed_frame_t *frame);
+state_update_result_t state_apply_frame(indicator_state_t *p_state, const parsed_frame_t *p_frame);
+
+/**
+ * state_apply_dispatch — применить payload opcode=0xAA к состоянию диспетчера.
+ *
+ * Возвращает dispatch_changed=1 если значение изменилось.
+ * Не зависит от initialized (диспетчер независим от состояния лифта).
+ */
+state_update_result_t state_apply_dispatch(indicator_state_t *p_state, dispatch_state_t dispatch);

@@ -2,14 +2,16 @@
  * @file main.c
  * @brief Lift Indicator — composition root и главный poll-цикл.
  *
- * _GNU_SOURCE требуется для:
- *   - signalfd(2) / SFD_NONBLOCK / SFD_CLOEXEC   (linux/signalfd.h)
- *   - timerfd_create(2) / TFD_NONBLOCK / TFD_CLOEXEC (sys/timerfd.h)
- *   - CLOCK_MONOTONIC                              (time.h)
- *   - sigemptyset / sigaddset / sigprocmask / SIG_BLOCK (signal.h, POSIX.1-2001
- *     — строго говоря POSIX, но clangd без _GNU_SOURCE их не видит)
+ * Использование:
+ *   indicator --config=/path/to/nku_scheme.toml
  *
- * Определение должно стоять ДО любых #include.
+ * _GNU_SOURCE требуется для:
+ *   signalfd / SFD_NONBLOCK / SFD_CLOEXEC    <sys/signalfd.h>
+ *   timerfd_create / TFD_NONBLOCK / TFD_CLOEXEC  <sys/timerfd.h>
+ *   CLOCK_MONOTONIC                           <time.h>
+ *   sigemptyset / sigaddset / sigprocmask     <signal.h>
+ *
+ * Должно стоять ДО любых #include.
  */
 #define _GNU_SOURCE
 
@@ -33,26 +35,27 @@
 
 /* ─── Константы ─────────────────────────────────────────────────────────── */
 
-#define UART_DEVICE         "/dev/ttyAMA0"
-#define UART_BAUD           115200
-#define UART_PARITY         UART_PARITY_NONE
-#define CONFIG_PATH         "/home/pi/indicator/configs/device/nku_scheme.toml"
-#define WATCHDOG_INTERVAL_S 30
+static const char *const DEFAULT_CONFIG_PATH = "/home/pi/indicator/configs/device/nku_scheme.toml";
+
+static const char *const UART_DEVICE = "/dev/ttyAMA0";
+
+/** Период watchdog-лога в секундах. */
+static const int WATCHDOG_INTERVAL_S = 30;
 
 /* ─── Индексы pollfd ─────────────────────────────────────────────────────── */
 
-enum
+typedef enum fd_index_e
 {
-    FD_UART = 0,
-    FD_SIG,
-    FD_TIMER,
-    /* FD_FIFO — добавить в Фазе 7 */
-    FD_COUNT
-};
+    FD_UART  = 0,
+    FD_SIG   = 1,
+    FD_TIMER = 2,
+    /* FD_FIFO = 3  — добавить в Фазе 7 */
+    FD_COUNT = 3,
+} fd_index_t;
 
 /* ─── Контекст приложения ────────────────────────────────────────────────── */
 
-typedef struct
+typedef struct app_s
 {
     config_t cfg;
     indicator_state_t state;
@@ -64,59 +67,124 @@ typedef struct
 
 /* ─── Статистика ─────────────────────────────────────────────────────────── */
 
-typedef struct
+typedef struct stats_s
 {
     unsigned frames_ok;
     unsigned parse_errors;
+    unsigned unknown_opcodes;
     int last_floor_num;
     int last_arrow;
     int last_mode;
 } stats_t;
 
-static stats_t g_stats;
+/** Единственная глобальная переменная: статистика для watchdog. */
+static stats_t g_s_stats;
+
+/* ─── Парсинг аргументов командной строки ────────────────────────────────── */
+
+/**
+ * Ищет аргумент вида --config=/some/path.
+ * Возвращает путь или DEFAULT_CONFIG_PATH если аргумент не передан.
+ */
+static const char *parse_config_path(int argc, char *p_argv[])
+{
+    static const char PREFIX[]  = "--config=";
+    static const int PREFIX_LEN = 9; /* strlen("--config=") */
+
+    for (int i = 1; i < argc; i++)
+    {
+        if (strncmp(p_argv[i], PREFIX, (size_t) PREFIX_LEN) == 0)
+        {
+            return &p_argv[i][PREFIX_LEN];
+        }
+    }
+    return DEFAULT_CONFIG_PATH;
+}
 
 /* ─── UART коллбэк ───────────────────────────────────────────────────────── */
 
-static void on_uart_frame(const mu_frame_t *frame, void *ctx)
+/* ─────────────────────────────────────────────────────────────────────────────
+ * on_uart_frame — заменить в main.c
+ *
+ * Добавлена ветка MU_OPCODE_DISPATCH (0xAA).
+ * Диспетчер имеет наивысший приоритет над mode из 0xDA.
+ * ──────────────────────────────────────────────────────────────────────────── */
+static void on_uart_frame(const mu_frame_t *p_frame, void *p_ctx)
 {
-    app_t *app = (app_t *) ctx;
+    app_t *p_app = (app_t *) p_ctx;
 
-    if (frame->opcode != MU_OPCODE_ELEVATOR_STATUS)
+    /* ── Диспетчерская связь (opcode=0xAA) ───────────────────────────────── */
+    if (p_frame->opcode == MU_OPCODE_DISPATCH)
     {
-        syslog(LOG_DEBUG, "uart: unknown opcode 0x%02X", frame->opcode);
+        dispatch_state_t dispatch;
+        parse_result_t r = protocol_parse_dispatch(p_frame, &dispatch);
+        if (r != PARSE_OK)
+        {
+            g_s_stats.parse_errors++;
+            syslog(LOG_WARNING, "dispatch: parse error %d", (int) r);
+            return;
+        }
+
+        state_update_result_t upd = state_apply_dispatch(&p_app->state, dispatch);
+        if (upd.dispatch_changed)
+        {
+            syslog(LOG_NOTICE, "dispatch: state=%d (%s)", (int) dispatch,
+                   dispatch == DISPATCH_CALL     ? "CALL"
+                   : dispatch == DISPATCH_ANSWER ? "ANSWER"
+                                                 : "OFF");
+
+            /* Фаза 4: renderer_update_dispatch(p_app->renderer, dispatch); */
+        }
         return;
     }
 
-    parsed_frame_t payload;
-    parse_result_t r = protocol_parse_payload(frame, &payload);
-    if (r != PARSE_OK)
+    /* ── Статус лифта (opcode=0xDA) ───────────────────────────────────────── */
+    if (p_frame->opcode == MU_OPCODE_ELEVATOR_STATUS)
     {
-        g_stats.parse_errors++;
-        syslog(LOG_WARNING, "uart: protocol_parse_payload error %d", (int) r);
+        parsed_frame_t payload;
+        parse_result_t r = protocol_parse_payload(p_frame, &payload);
+        if (r != PARSE_OK)
+        {
+            g_s_stats.parse_errors++;
+            syslog(LOG_WARNING, "uart: protocol_parse_payload error %d", (int) r);
+            return;
+        }
+
+        g_s_stats.frames_ok++;
+
+        floor_t floor             = floor_decode(payload.left_char, payload.right_char);
+        state_update_result_t upd = state_apply_frame(&p_app->state, &payload);
+
+        syslog(LOG_INFO,
+               "frame #%u: floor=%d(%d) arrow=%d sound=%d mode=%d | "
+               "changed: floor=%d arrow=%d mode=%d sound=%d first=%d "
+               "dispatch_active=%d",
+               g_s_stats.frames_ok, floor.number, (int) floor.type, (int) payload.arrow,
+               (int) payload.sound, (int) payload.mode, upd.floor_changed, upd.arrow_changed,
+               upd.mode_changed, upd.sound_triggered, upd.first_frame,
+               (p_app->state.active_dispatch != DISPATCH_OFF) ? 1 : 0);
+
+        g_s_stats.last_floor_num = floor.number;
+        g_s_stats.last_arrow     = (int) payload.arrow;
+        g_s_stats.last_mode      = (int) payload.mode;
+
+        /*
+         * Фаза 4: renderer_update(p_app->renderer, &upd, &payload, floor,
+         *                         p_app->state.active_dispatch);
+         * Фаза 5: if (upd.sound_triggered)
+         *             audio_play(p_app->audio, payload.sound, floor, &p_app->cfg);
+         */
+        (void) p_app;
         return;
     }
 
-    g_stats.frames_ok++;
-
-    floor_t floor             = floor_decode(payload.left_char, payload.right_char);
-    state_update_result_t upd = state_apply_frame(&app->state, &payload);
-
-    syslog(LOG_INFO,
-           "frame: floor=%d type=%d  arrow=%d  sound=%d  mode=%d  "
-           "(changed: floor=%d arrow=%d mode=%d sound=%d first=%d)",
-           floor.number, (int) floor.type, (int) payload.arrow, (int) payload.sound,
-           (int) payload.mode, upd.floor_changed, upd.arrow_changed, upd.mode_changed,
-           upd.sound_triggered, upd.first_frame);
-
-    g_stats.last_floor_num = floor.number;
-    g_stats.last_arrow     = (int) payload.arrow;
-    g_stats.last_mode      = (int) payload.mode;
-
-    /* Фаза 4: renderer_update(app->renderer, &upd, &payload, floor); */
-    /* Фаза 5: if (upd.sound_triggered) audio_play(app->audio, payload.sound, floor, &app->cfg); */
+    /* ── Неизвестный opcode ───────────────────────────────────────────────── */
+    g_s_stats.unknown_opcodes++;
+    syslog(LOG_DEBUG, "uart: unknown opcode 0x%02X len=%u", (unsigned) p_frame->opcode,
+           (unsigned) p_frame->data_len);
 }
 
-/* ─── signalfd ───────────────────────────────────────────────────────────── */
+/* ─── Инициализация signalfd ─────────────────────────────────────────────── */
 
 static int setup_signalfd(void)
 {
@@ -126,8 +194,6 @@ static int setup_signalfd(void)
     sigaddset(&mask, SIGINT);
     sigaddset(&mask, SIGCHLD);
 
-    /* Блокируем сигналы от стандартной доставки — они придут через signalfd.
-     * Без этого и signalfd, и обычный обработчик получили бы сигнал. */
     if (sigprocmask(SIG_BLOCK, &mask, NULL) < 0)
     {
         syslog(LOG_ERR, "sigprocmask: %s", strerror(errno));
@@ -138,33 +204,37 @@ static int setup_signalfd(void)
     if (fd < 0)
     {
         syslog(LOG_ERR, "signalfd: %s", strerror(errno));
-        return -1;
     }
     return fd;
 }
 
+/* ─── Обработка сигнала ──────────────────────────────────────────────────── */
+
 /**
  * @return 1 если нужно завершить цикл, 0 иначе.
  */
-static int handle_signal(const struct signalfd_siginfo *si)
+static int handle_signal(const struct signalfd_siginfo *p_si)
 {
-    switch (si->ssi_signo)
+    switch (p_si->ssi_signo)
     {
     case SIGTERM:
     case SIGINT:
-        syslog(LOG_NOTICE, "received signal %u, shutting down", si->ssi_signo);
+        syslog(LOG_NOTICE, "received signal %u, shutting down", p_si->ssi_signo);
         return 1;
+
     case SIGCHLD:
-        syslog(LOG_DEBUG, "SIGCHLD: child pid=%u status=%u", si->ssi_pid, si->ssi_status);
-        /* Фаза 3: video_player_check_and_restart(app->video); */
+        syslog(LOG_DEBUG, "SIGCHLD: child pid=%u status=%u", p_si->ssi_pid, p_si->ssi_status);
+        /* Фаза 3: video_player_check_and_restart(p_app->video); */
         break;
+
     default:
+        syslog(LOG_DEBUG, "unexpected signal %u", p_si->ssi_signo);
         break;
     }
     return 0;
 }
 
-/* ─── timerfd ────────────────────────────────────────────────────────────── */
+/* ─── Инициализация timerfd ──────────────────────────────────────────────── */
 
 static int setup_timerfd(void)
 {
@@ -182,43 +252,67 @@ static int setup_timerfd(void)
     if (timerfd_settime(fd, 0, &ts, NULL) < 0)
     {
         syslog(LOG_ERR, "timerfd_settime: %s", strerror(errno));
-        close(fd);
+        (void) close(fd);
         return -1;
     }
     return fd;
 }
 
+/* ─── Watchdog tick ──────────────────────────────────────────────────────── */
+
 static void on_watchdog_tick(void)
 {
-    syslog(LOG_INFO,
-           "watchdog: frames_ok=%u parse_errors=%u  "
+    syslog(LOG_NOTICE,
+           "watchdog: frames_ok=%u parse_errors=%u unknown_opcodes=%u | "
            "last: floor=%d arrow=%d mode=%d",
-           g_stats.frames_ok, g_stats.parse_errors, g_stats.last_floor_num, g_stats.last_arrow,
-           g_stats.last_mode);
+           g_s_stats.frames_ok, g_s_stats.parse_errors, g_s_stats.unknown_opcodes,
+           g_s_stats.last_floor_num, g_s_stats.last_arrow, g_s_stats.last_mode);
+}
+
+/* ─── Инициализация UART ─────────────────────────────────────────────────── */
+
+static uart_t *open_uart(app_t *p_app)
+{
+    uart_t *p_u = uart_open(UART_DEVICE, BAUD_115200, UART_PARITY_NONE, on_uart_frame, p_app);
+    if (p_u == NULL)
+    {
+        syslog(LOG_ERR, "uart_open(%s, 115200): %s", UART_DEVICE, strerror(errno));
+        return NULL;
+    }
+    syslog(LOG_NOTICE, "UART open: %s @ 115200 baud, 8N1", UART_DEVICE);
+    return p_u;
 }
 
 /* ─── main ───────────────────────────────────────────────────────────────── */
 
-int main(void)
+int main(int argc, char *p_argv[])
 {
     openlog("indicator", LOG_PID | LOG_CONS, LOG_DAEMON);
-    syslog(LOG_NOTICE, "indicator starting");
+    syslog(LOG_NOTICE, "indicator starting (phase-2)");
+
+    const char *p_config_path = parse_config_path(argc, p_argv);
+
+    /* ── Контекст и статистика ───────────────────────────────────────────── */
 
     app_t app;
-    memset(&app, 0, sizeof(app));
-    memset(&g_stats, 0, sizeof(g_stats));
-
-    /* ── 1. Конфиг ───────────────────────────────────────────────────────── */
-
-    if (config_load(CONFIG_PATH, &app.cfg) < 0)
-        syslog(LOG_WARNING, "config: using defaults (file not found)");
-
-    syslog(LOG_INFO, "config: sound=%d%% music=%d%% load_idx=%d", app.cfg.sound_volume_percent,
-           app.cfg.music_volume_percent, app.cfg.load_capacity_idx);
-
+    (void) memset(&app, 0, sizeof(app));
+    (void) memset(&g_s_stats, 0, sizeof(g_s_stats));
     state_init(&app.state);
 
-    /* ── 2. signalfd ─────────────────────────────────────────────────────── */
+    /* ── Конфиг ──────────────────────────────────────────────────────────── */
+
+    if (config_load(p_config_path, &app.cfg) < 0)
+    {
+        syslog(LOG_WARNING, "config: file not found '%s', using defaults", p_config_path);
+    }
+    else
+    {
+        syslog(LOG_INFO, "config: sound=%d%% music=%d%% load_idx=%d | path=%s",
+               app.cfg.sound_volume_percent, app.cfg.music_volume_percent,
+               app.cfg.load_capacity_idx, p_config_path);
+    }
+
+    /* ── signalfd ─────────────────────────────────────────────────────────── */
 
     int sig_fd = setup_signalfd();
     if (sig_fd < 0)
@@ -226,40 +320,38 @@ int main(void)
         goto fail_early;
     }
 
-    /* ── 3. timerfd ──────────────────────────────────────────────────────── */
+    /* ── timerfd ──────────────────────────────────────────────────────────── */
 
     int timer_fd = setup_timerfd();
     if (timer_fd < 0)
     {
-        close(sig_fd);
+        (void) close(sig_fd);
         goto fail_early;
     }
 
-    /* ── 4. Video player (Фаза 3) ────────────────────────────────────────── */
-    /* TODO: app.video = video_player_open(...); */
+    /* ── Video player (Фаза 3) ────────────────────────────────────────────── */
+    /* TODO: app.video = video_player_open(&app.cfg); */
 
-    /* ── 5. Renderer (Фаза 4) ────────────────────────────────────────────── */
+    /* ── Renderer (Фаза 4) ────────────────────────────────────────────────── */
     /* TODO: app.renderer = renderer_init(&app.cfg); */
 
-    /* ── 6. Audio (Фаза 5) ───────────────────────────────────────────────── */
-    /* TODO: app.audio = audio_player_open(...); */
+    /* ── Audio (Фаза 5) ───────────────────────────────────────────────────── */
+    /* TODO: app.audio = audio_player_open(&app.cfg); */
 
-    /* ── 7. UART ─────────────────────────────────────────────────────────── */
+    /* ── UART (последним: только после готовности всех потребителей) ──────── */
 
-    app.uart = uart_open(UART_DEVICE, UART_BAUD, UART_PARITY, on_uart_frame, &app);
-    if (!app.uart)
+    app.uart = open_uart(&app);
+    if (app.uart == NULL)
     {
-        syslog(LOG_ERR, "uart_open(%s): %s", UART_DEVICE, strerror(errno));
-        close(timer_fd);
-        close(sig_fd);
+        (void) close(timer_fd);
+        (void) close(sig_fd);
         goto fail_early;
     }
-    syslog(LOG_NOTICE, "UART open: %s @ %d baud", UART_DEVICE, UART_BAUD);
 
-    /* ── 8. Poll loop ────────────────────────────────────────────────────── */
+    /* ── Poll loop ────────────────────────────────────────────────────────── */
 
     struct pollfd fds[FD_COUNT];
-    memset(fds, 0, sizeof(fds));
+    (void) memset(fds, 0, sizeof(fds));
     fds[FD_UART].fd      = uart_get_fd(app.uart);
     fds[FD_UART].events  = POLLIN;
     fds[FD_SIG].fd       = sig_fd;
@@ -270,9 +362,9 @@ int main(void)
     syslog(LOG_NOTICE, "event loop started");
 
     int running = 1;
-    while (running)
+    while (running != 0)
     {
-        int ret = poll(fds, FD_COUNT, -1);
+        int ret = poll(fds, (nfds_t) FD_COUNT, -1);
         if (ret < 0)
         {
             if (errno == EINTR)
@@ -283,19 +375,21 @@ int main(void)
             break;
         }
 
-        if (fds[FD_UART].revents & POLLIN)
+        /* ── UART ─────────────────────────────────────────────────────────── */
+        if ((fds[FD_UART].revents & POLLIN) != 0)
         {
             if (uart_process_rx(app.uart) < 0)
             {
-                syslog(LOG_WARNING, "uart_process_rx: %s", strerror(errno));
+                syslog(LOG_ERR, "uart_process_rx: %s", strerror(errno));
             }
         }
-        if (fds[FD_UART].revents & (POLLERR | POLLHUP))
+        if ((fds[FD_UART].revents & (POLLERR | POLLHUP)) != 0)
         {
-            syslog(LOG_ERR, "uart: device error revents=0x%x", fds[FD_UART].revents);
+            syslog(LOG_ERR, "uart: device error revents=0x%x", (unsigned) fds[FD_UART].revents);
         }
 
-        if (fds[FD_SIG].revents & POLLIN)
+        /* ── Сигналы ──────────────────────────────────────────────────────── */
+        if ((fds[FD_SIG].revents & POLLIN) != 0)
         {
             struct signalfd_siginfo si;
             if (read(sig_fd, &si, sizeof(si)) == (ssize_t) sizeof(si))
@@ -304,26 +398,29 @@ int main(void)
             }
         }
 
-        if (fds[FD_TIMER].revents & POLLIN)
+        /* ── Watchdog tick ────────────────────────────────────────────────── */
+        if ((fds[FD_TIMER].revents & POLLIN) != 0)
         {
-            uint64_t exp;
+            uint64_t exp = 0U;
             if (read(timer_fd, &exp, sizeof(exp)) == (ssize_t) sizeof(exp))
             {
                 on_watchdog_tick();
             }
         }
 
-        /* Фаза 7: if (fds[FD_FIFO].revents & POLLIN) media_ipc_process(...); */
+        /* ── Media FIFO (Фаза 7) ──────────────────────────────────────────── */
+        /* if ((fds[FD_FIFO].revents & POLLIN) != 0)
+         *     media_ipc_process(p_app); */
     }
 
-    /* ── Cleanup ─────────────────────────────────────────────────────────── */
+    /* ── Cleanup ──────────────────────────────────────────────────────────── */
 
-    syslog(LOG_NOTICE, "shutdown: frames_ok=%u parse_errors=%u", g_stats.frames_ok,
-           g_stats.parse_errors);
+    syslog(LOG_NOTICE, "shutdown: frames_ok=%u parse_errors=%u", g_s_stats.frames_ok,
+           g_s_stats.parse_errors);
 
     uart_close(app.uart);
-    close(timer_fd);
-    close(sig_fd);
+    (void) close(timer_fd);
+    (void) close(sig_fd);
 
     /* TODO Фаза 3: video_player_close(app.video);   */
     /* TODO Фаза 4: renderer_destroy(app.renderer);  */
@@ -334,7 +431,7 @@ int main(void)
     return 0;
 
 fail_early:
-    syslog(LOG_CRIT, "startup failed");
+    syslog(LOG_CRIT, "startup failed, exiting");
     closelog();
     return 1;
 }
