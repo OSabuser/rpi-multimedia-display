@@ -1,52 +1,84 @@
 /**
- * src/config/config.h
+ * @file config.h
+ * @brief Конфигурация индикатора.
  *
- * Конфигурация, читаемая из nku_scheme.toml.
+ * Два источника конфигурации:
+ *   nku_scheme.toml — MCU-синхронизируемые параметры (звук, музыка, нагрузка).
+ *   video.toml      — Pi-hardware параметры (окно воспроизведения видео).
  *
- * Парсим три секции:
- *   [soundvolume]  → current "N%" → sound_volume_percent
- *   [musicvolume]  → current "N%" → music_volume_percent
- *   [loadcapacity] → current + possible_values → load_capacity_idx
- *
- * Приоритет: поле current → поле default (если current отсутствует).
- * При ошибке чтения файла: используются встроенные значения по умолчанию.
- *
- * Парсер — минимальный встроенный (без сторонних зависимостей),
- * поддерживает только subset TOML нужного нам формата.
+ * Оба файла парсятся в одну структуру config_t.
+ * Отсутствие любого файла не является ошибкой — используются defaults.
  */
 
 #pragma once
 
-/* ─────────────────────────────────────────────────────────────────────────────
- * Значения по умолчанию
- * ──────────────────────────────────────────────────────────────────────────── */
-#define CONFIG_DEFAULT_SOUND_VOLUME 50
-#define CONFIG_DEFAULT_MUSIC_VOLUME 0
-#define CONFIG_DEFAULT_LOAD_IDX     0
+/* ─── Defaults ───────────────────────────────────────────────────────────── */
 
-/* ─────────────────────────────────────────────────────────────────────────────
- * Конфигурация устройства
- * ──────────────────────────────────────────────────────────────────────────── */
-typedef struct
+#define CONFIG_DEFAULT_SOUND_VOLUME 50 /* % */
+#define CONFIG_DEFAULT_MUSIC_VOLUME 0  /* % */
+#define CONFIG_DEFAULT_LOAD_IDX     0  /* индекс в possible_values: "СКРЫТО" */
+
+#define CONFIG_DEFAULT_VIDEO_WIN_X 0
+#define CONFIG_DEFAULT_VIDEO_WIN_Y 0
+#define CONFIG_DEFAULT_VIDEO_WIN_W 600
+#define CONFIG_DEFAULT_VIDEO_WIN_H 1024
+
+/* ─── Структура конфигурации ─────────────────────────────────────────────── */
+
+typedef struct config_s
 {
-    int sound_volume_percent; /* 0 | 25 | 50 | 75 | 100   */
-    int music_volume_percent; /* 0 | 25 | 50 | 75 | 100   */
-    int load_capacity_idx;    /* 0-based индекс в possible_values → load_N.png */
+    /* ── Из nku_scheme.toml ─────────────────────────────────────────────── */
+
+    /** Громкость звуковых событий, % (0–100). */
+    int sound_volume_percent;
+
+    /** Громкость фоновой музыки, % (0–100). */
+    int music_volume_percent;
+
+    /**
+     * Индекс выбранной грузоподъёмности в массиве possible_values секции
+     * [loadcapacity]. 0 = "СКРЫТО".
+     */
+    int load_capacity_idx;
+
+    /* ── Из video.toml ──────────────────────────────────────────────────── */
+
+    /** Окно воспроизведения omxplayer: левый край, пиксели. */
+    int video_win_x;
+
+    /** Окно воспроизведения omxplayer: верхний край, пиксели. */
+    int video_win_y;
+
+    /** Окно воспроизведения omxplayer: ширина, пиксели. */
+    int video_win_w;
+
+    /** Окно воспроизведения omxplayer: высота, пиксели. */
+    int video_win_h;
 } config_t;
 
-/* ─────────────────────────────────────────────────────────────────────────────
- * API
- * ──────────────────────────────────────────────────────────────────────────── */
+/* ─── API ────────────────────────────────────────────────────────────────── */
 
 /**
- * config_load — загрузить конфигурацию из файла TOML.
+ * config_load — загрузить nku_scheme.toml в структуру config_t.
  *
- * @param path  путь к nku_scheme.toml (например, "/home/pi/indicator/configs/device/nku_scheme.toml")
- * @param out   [out] заполненная структура
+ * Всегда инициализирует *out дефолтами перед парсингом.
  *
- * @return  0  — успех (файл прочитан полностью)
- *         -1  — файл не найден или ошибка чтения (out заполнен дефолтами)
- *
- * Функция всегда заполняет out, даже при ошибке (дефолты).
+ * @param path  путь к nku_scheme.toml; NULL допустим → только дефолты
+ * @param out   заполняется результатом
+ * @return      0 при успехе, -1 если файл не найден или path == NULL
+ *              (в обоих случаях дефолты уже выставлены)
  */
 int config_load(const char *path, config_t *out);
+
+/**
+ * video_config_load — загрузить video.toml и переопределить video_win_* поля.
+ *
+ * Вызывается ПОСЛЕ config_load (которая выставляет дефолты).
+ * Файл не найден — не ошибка, дефолты остаются.
+ * Частичный файл — только присутствующие ключи переопределяются.
+ *
+ * @param path  путь к video.toml; NULL допустим → ничего не меняется
+ * @param out   структура config_t, уже инициализированная config_load
+ * @return      0 при успехе, -1 если файл не найден или path == NULL
+ */
+int video_config_load(const char *path, config_t *out);

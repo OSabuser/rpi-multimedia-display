@@ -111,9 +111,11 @@ typedef enum indicator_mode_e
 /**
  * mode_is_valid — проверить допустимость числового значения поля M.
  */
-static inline int mode_is_valid(int v)
+static inline int mode_is_valid(int mode_value)
 {
-    return (v >= 0 && v <= 9) || (v == 100) || (v == 101) || (v == 255);
+    return (mode_value >= MODE_NORMAL && mode_value <= MODE_UPS_MALFUNCTION) ||
+           (mode_value == MODE_DISPATCH_CALL) || (mode_value == MODE_DISPATCH_ANSWER) ||
+           (mode_value == MODE_CONN_LOST);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────

@@ -1,15 +1,24 @@
 /**
  * src/config/config.c
  *
- * Минимальный парсер TOML-подмножества для nku_scheme.toml.
- * Без сторонних зависимостей. ~250 строк.
+ * Минимальный парсер TOML-подмножества.
+ * Без сторонних зависимостей.
  *
- * Поддерживаемый subset:
+ * Два парсера в одном файле:
+ *   config_load()       — nku_scheme.toml (строки, массивы, MCU-параметры)
+ *   video_config_load() — video.toml (целые числа, только [video] секция)
+ *
+ * Поддерживаемый subset для nku_scheme.toml:
  *   [section]          — заголовок секции
  *   key = "value"      — строковое значение
  *   key = [            — начало строкового массива (multiline)
  *   "value",           — элемент массива
  *   ]                  — конец массива
+ *   # comment          — комментарий
+ *
+ * Поддерживаемый subset для video.toml:
+ *   [section]          — заголовок секции
+ *   key = 123          — целочисленное значение (без кавычек)
  *   # comment          — комментарий
  */
 
@@ -27,7 +36,7 @@
 #define ARRAY_ENTRIES 32
 
 /* ─────────────────────────────────────────────────────────────────────────────
- * Секции, которые нас интересуют
+ * Секции nku_scheme.toml
  * ──────────────────────────────────────────────────────────────────────────── */
 typedef enum
 {
@@ -39,27 +48,25 @@ typedef enum
 } section_t;
 
 /* ─────────────────────────────────────────────────────────────────────────────
- * Контекст парсинга
+ * Контекст парсинга nku_scheme.toml
  * ──────────────────────────────────────────────────────────────────────────── */
 typedef struct
 {
-    /* Собранные значения */
-    char sv_current[VALUE_MAX];             /* soundvolume.current  */
-    char sv_default[VALUE_MAX];             /* soundvolume.default  */
-    char mv_current[VALUE_MAX];             /* musicvolume.current  */
-    char mv_default[VALUE_MAX];             /* musicvolume.default  */
-    char lc_current[VALUE_MAX];             /* loadcapacity.current */
-    char lc_default[VALUE_MAX];             /* loadcapacity.default */
-    char lc_vals[ARRAY_ENTRIES][VALUE_MAX]; /* loadcapacity.possible_values */
+    char sv_current[VALUE_MAX];
+    char sv_default[VALUE_MAX];
+    char mv_current[VALUE_MAX];
+    char mv_default[VALUE_MAX];
+    char lc_current[VALUE_MAX];
+    char lc_default[VALUE_MAX];
+    char lc_vals[ARRAY_ENTRIES][VALUE_MAX];
     int lc_count;
 
-    /* Состояние автомата */
     section_t section;
-    int in_array; /* 1 = накапливаем элементы possible_values */
+    int in_array;
 } ctx_t;
 
 /* ─────────────────────────────────────────────────────────────────────────────
- * Утилиты
+ * Утилиты — используются обоими парсерами
  * ──────────────────────────────────────────────────────────────────────────── */
 
 /** Обрезать пробелы/табы/\r\n с обоих концов, in-place. */
@@ -82,7 +89,6 @@ static void trim(char *s)
 
 /**
  * Извлечь содержимое первой пары кавычек из строки.
- * "50%" → "50%", без кавычек в буфере out.
  * Возвращает 1 при успехе, 0 если кавычек нет.
  */
 static int extract_quoted(const char *line, char *out, int out_sz)
@@ -104,7 +110,7 @@ static int extract_quoted(const char *line, char *out, int out_sz)
 
 /**
  * Проверить, что строка начинается с ключевого слова, за которым идёт '='
- * (с возможными пробелами). Защита от ложных срабатываний (current_foo etc.).
+ * (с возможными пробелами). Защита от совпадений по префиксу (current_foo и т.п.).
  */
 static int key_eq(const char *line, const char *key)
 {
@@ -134,7 +140,7 @@ static int parse_percent(const char *s)
     return v;
 }
 
-/** Найти строку needle в массиве arr[count][col_sz]. Вернуть индекс или -1. */
+/** Найти строку needle в массиве arr[count][VALUE_MAX]. Вернуть индекс или -1. */
 static int find_in_array(const char arr[][VALUE_MAX], int count, const char *needle)
 {
     for (int i = 0; i < count; i++)
@@ -146,11 +152,10 @@ static int find_in_array(const char arr[][VALUE_MAX], int count, const char *nee
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
- * Обработка одной строки файла
+ * Парсер nku_scheme.toml — обработка одной строки
  * ──────────────────────────────────────────────────────────────────────────── */
 static void process_line(ctx_t *c, char *line)
 {
-    /* Убрать комментарий (#...) */
     char *comment = strchr(line, '#');
     if (comment)
         *comment = '\0';
@@ -168,7 +173,6 @@ static void process_line(ctx_t *c, char *line)
         }
         else if (line[0] == '"')
         {
-            /* Элемент: "value", или "value" */
             char val[VALUE_MAX];
             if (extract_quoted(line, val, sizeof(val)))
             {
@@ -183,7 +187,7 @@ static void process_line(ctx_t *c, char *line)
         return;
     }
 
-    /* ── Заголовок секции [name] ─────────────────────────────────────────── */
+    /* ── Заголовок секции ────────────────────────────────────────────────── */
     if (line[0] == '[')
     {
         if (strcmp(line, "[soundvolume]") == 0)
@@ -197,7 +201,6 @@ static void process_line(ctx_t *c, char *line)
         return;
     }
 
-    /* ── Только интересующие секции ──────────────────────────────────────── */
     if (c->section == SECT_NONE || c->section == SECT_OTHER)
         return;
 
@@ -228,7 +231,6 @@ static void process_line(ctx_t *c, char *line)
     }
     else if (key_eq(line, "possible_values"))
     {
-        /* Начало массива. Массив всегда multiline в nku_scheme.toml */
         if (strchr(line, '[') != NULL)
         {
             c->in_array = 1;
@@ -237,14 +239,20 @@ static void process_line(ctx_t *c, char *line)
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
- * config_load
+ * config_load — загрузить nku_scheme.toml
  * ──────────────────────────────────────────────────────────────────────────── */
 int config_load(const char *path, config_t *out)
 {
-    /* Инициализировать дефолтами — всегда, даже при ошибке файла */
+    /* Инициализировать дефолтами — всегда, даже при ошибке файла. */
     out->sound_volume_percent = CONFIG_DEFAULT_SOUND_VOLUME;
     out->music_volume_percent = CONFIG_DEFAULT_MUSIC_VOLUME;
     out->load_capacity_idx    = CONFIG_DEFAULT_LOAD_IDX;
+
+    /* video_win_* — дефолты для случая когда video.toml не найден. */
+    out->video_win_x = CONFIG_DEFAULT_VIDEO_WIN_X;
+    out->video_win_y = CONFIG_DEFAULT_VIDEO_WIN_Y;
+    out->video_win_w = CONFIG_DEFAULT_VIDEO_WIN_W;
+    out->video_win_h = CONFIG_DEFAULT_VIDEO_WIN_H;
 
     if (path == NULL)
         return -1;
@@ -265,21 +273,16 @@ int config_load(const char *path, config_t *out)
 
     /* ── Применить результаты парсинга ──────────────────────────────────── */
 
-    /* soundvolume: current > default */
     {
         const char *v = ctx.sv_current[0] ? ctx.sv_current : ctx.sv_default;
         if (v[0])
             out->sound_volume_percent = parse_percent(v);
     }
-
-    /* musicvolume: current > default */
     {
         const char *v = ctx.mv_current[0] ? ctx.mv_current : ctx.mv_default;
         if (v[0])
             out->music_volume_percent = parse_percent(v);
     }
-
-    /* loadcapacity: найти индекс current в possible_values */
     {
         const char *v = ctx.lc_current[0] ? ctx.lc_current : ctx.lc_default;
         if (v[0] && ctx.lc_count > 0)
@@ -287,9 +290,86 @@ int config_load(const char *path, config_t *out)
             int idx = find_in_array((const char(*)[VALUE_MAX]) ctx.lc_vals, ctx.lc_count, v);
             if (idx >= 0)
                 out->load_capacity_idx = idx;
-            /* idx < 0: значение current не найдено в массиве → оставить дефолт */
         }
     }
 
+    return 0;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * video_config_load — загрузить video.toml
+ *
+ * Формат: секция [video] с целочисленными ключами без кавычек.
+ * Пример:
+ *   [video]
+ *   win_x = 0
+ *   win_y = 0
+ *   win_w = 600
+ *   win_h = 1024
+ *
+ * Только ключи присутствующие в файле переопределяют значения.
+ * Отсутствие файла не ошибка — дефолты из config_load остаются.
+ * ──────────────────────────────────────────────────────────────────────────── */
+int video_config_load(const char *path, config_t *out)
+{
+    if (path == NULL)
+        return -1;
+
+    FILE *f = fopen(path, "r");
+    if (f == NULL)
+        return -1;
+
+    int in_video = 0;
+    char line[LINE_MAX];
+
+    while (fgets(line, sizeof(line), f) != NULL)
+    {
+        /* Удалить комментарий */
+        char *comment = strchr(line, '#');
+        if (comment)
+            *comment = '\0';
+
+        trim(line);
+        if (line[0] == '\0')
+            continue;
+
+        /* Заголовок секции */
+        if (line[0] == '[')
+        {
+            in_video = (strcmp(line, "[video]") == 0);
+            continue;
+        }
+
+        if (!in_video)
+            continue;
+
+        /* Найти '=' и разбить на ключ / значение */
+        char *eq = strchr(line, '=');
+        if (eq == NULL)
+            continue;
+
+        /* Ключ: от начала до '=' */
+        char key[VALUE_MAX];
+        size_t klen = (size_t) (eq - line);
+        if (klen == 0 || klen >= VALUE_MAX)
+            continue;
+        memcpy(key, line, klen);
+        key[klen] = '\0';
+        trim(key);
+
+        /* Значение: после '=', целое число */
+        int val = atoi(eq + 1);
+
+        if (strcmp(key, "win_x") == 0)
+            out->video_win_x = val;
+        else if (strcmp(key, "win_y") == 0)
+            out->video_win_y = val;
+        else if (strcmp(key, "win_w") == 0)
+            out->video_win_w = val;
+        else if (strcmp(key, "win_h") == 0)
+            out->video_win_h = val;
+    }
+
+    fclose(f);
     return 0;
 }

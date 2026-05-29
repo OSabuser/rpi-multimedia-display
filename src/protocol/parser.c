@@ -32,9 +32,9 @@ uint16_t protocol_crc16(const uint8_t *data, size_t len)
 parse_result_t protocol_parse_frame(const uint8_t *buf, size_t len, mu_frame_t *out,
                                     size_t *consumed)
 {
-    *consumed = 0u;
+    *consumed = 0U;
 
-    size_t start = 0u;
+    size_t start = 0U;
     while (start < len && buf[start] != MU_SYNC1)
     {
         start++;
@@ -45,7 +45,7 @@ parse_result_t protocol_parse_frame(const uint8_t *buf, size_t len, mu_frame_t *
         *consumed = len;
         return PARSE_ERROR_SYNC1;
     }
-    if (len - start < 3u)
+    if (len - start < 3U)
     {
         *consumed = start;
         return PARSE_NEED_MORE_DATA;
@@ -198,9 +198,9 @@ parse_result_t protocol_parse_dispatch(const mu_frame_t *p_frame, dispatch_state
     static const char STR_OFF[]    = "DISPATCH OFF\r\n";
 
     /* Размер строк без null-терминатора */
-    static const size_t LEN_CALL   = 15u; /* strlen("DISPATCH CALL\r\n")   */
-    static const size_t LEN_ANSWER = 17u; /* strlen("DISPATCH ANSWER\r\n") */
-    static const size_t LEN_OFF    = 14u; /* strlen("DISPATCH OFF\r\n")    */
+    static const size_t LEN_CALL   = 15U; /* strlen("DISPATCH CALL\r\n")   */
+    static const size_t LEN_ANSWER = 17U; /* strlen("DISPATCH ANSWER\r\n") */
+    static const size_t LEN_OFF    = 14U; /* strlen("DISPATCH OFF\r\n")    */
 
     if (p_frame->opcode != MU_OPCODE_DISPATCH)
     {

@@ -5,19 +5,22 @@
  * Использование:
  *   indicator --config=/path/to/nku_scheme.toml
  *
+ * video.toml определяется автоматически как sibling-файл рядом с --config:
+ *   /home/pi/indicator/configs/device/nku_scheme.toml
+ *   → /home/pi/indicator/configs/device/video.toml
+ *
  * _GNU_SOURCE требуется для:
  *   signalfd / SFD_NONBLOCK / SFD_CLOEXEC    <sys/signalfd.h>
  *   timerfd_create / TFD_NONBLOCK / TFD_CLOEXEC  <sys/timerfd.h>
  *   CLOCK_MONOTONIC                           <time.h>
  *   sigemptyset / sigaddset / sigprocmask     <signal.h>
- *
- * Должно стоять ДО любых #include.
  */
 #define _GNU_SOURCE
 
 #include "config/config.h"
 #include "domain/floor.h"
 #include "domain/state.h"
+#include "player/video_player.h"
 #include "protocol/parser.h"
 #include "protocol/types.h"
 #include "transport/uart.h"
@@ -38,6 +41,12 @@
 static const char *const DEFAULT_CONFIG_PATH = "/home/pi/indicator/configs/device/nku_scheme.toml";
 
 static const char *const UART_DEVICE = "/dev/ttyAMA0";
+
+/** Имя файла video.toml рядом с nku_scheme.toml. */
+static const char *const VIDEO_CONFIG_FILENAME = "video.toml";
+
+/** Путь к видеофайлу. В будущем переедет в конфиг (Фаза 7). */
+static const char *const VIDEO_PATH = "/home/pi/indicator/videos/output.mp4";
 
 /** Период watchdog-лога в секундах. */
 static const int WATCHDOG_INTERVAL_S = 30;
@@ -60,7 +69,7 @@ typedef struct app_s
     config_t cfg;
     indicator_state_t state;
     uart_t *uart;
-    /* video_player_t *video;    Фаза 3 */
+    video_player_t *video;
     /* renderer_t     *renderer; Фаза 4 */
     /* audio_player_t *audio;    Фаза 5 */
 } app_t;
@@ -77,19 +86,43 @@ typedef struct stats_s
     int last_mode;
 } stats_t;
 
-/** Единственная глобальная переменная: статистика для watchdog. */
 static stats_t g_s_stats;
+
+/* ─── Утилиты путей ──────────────────────────────────────────────────────── */
+
+/**
+ * derive_sibling_path — построить путь к файлу в той же директории.
+ *
+ * derive_sibling_path("/a/b/nku_scheme.toml", "video.toml", out, sz)
+ *   → "/a/b/video.toml"
+ *
+ * Если base_path не содержит '/' — filename копируется как есть.
+ */
+static void derive_sibling_path(const char *base_path, const char *filename, char *out,
+                                size_t out_sz)
+{
+    const char *last_slash = strrchr(base_path, '/');
+    if (last_slash == NULL)
+    {
+        strncpy(out, filename, out_sz - 1u);
+        out[out_sz - 1u] = '\0';
+        return;
+    }
+    /* Длина директории включая завершающий '/' */
+    size_t dir_len = (size_t) (last_slash - base_path) + 1u;
+    if (dir_len >= out_sz)
+        dir_len = out_sz - 1u;
+    strncpy(out, base_path, dir_len);
+    out[dir_len] = '\0';
+    strncat(out, filename, out_sz - dir_len - 1u);
+}
 
 /* ─── Парсинг аргументов командной строки ────────────────────────────────── */
 
-/**
- * Ищет аргумент вида --config=/some/path.
- * Возвращает путь или DEFAULT_CONFIG_PATH если аргумент не передан.
- */
 static const char *parse_config_path(int argc, char *p_argv[])
 {
     static const char PREFIX[]  = "--config=";
-    static const int PREFIX_LEN = 9; /* strlen("--config=") */
+    static const int PREFIX_LEN = 9;
 
     for (int i = 1; i < argc; i++)
     {
@@ -103,17 +136,10 @@ static const char *parse_config_path(int argc, char *p_argv[])
 
 /* ─── UART коллбэк ───────────────────────────────────────────────────────── */
 
-/* ─────────────────────────────────────────────────────────────────────────────
- * on_uart_frame — заменить в main.c
- *
- * Добавлена ветка MU_OPCODE_DISPATCH (0xAA).
- * Диспетчер имеет наивысший приоритет над mode из 0xDA.
- * ──────────────────────────────────────────────────────────────────────────── */
 static void on_uart_frame(const mu_frame_t *p_frame, void *p_ctx)
 {
     app_t *p_app = (app_t *) p_ctx;
 
-    /* ── Диспетчерская связь (opcode=0xAA) ───────────────────────────────── */
     if (p_frame->opcode == MU_OPCODE_DISPATCH)
     {
         dispatch_state_t dispatch;
@@ -132,13 +158,11 @@ static void on_uart_frame(const mu_frame_t *p_frame, void *p_ctx)
                    dispatch == DISPATCH_CALL     ? "CALL"
                    : dispatch == DISPATCH_ANSWER ? "ANSWER"
                                                  : "OFF");
-
             /* Фаза 4: renderer_update_dispatch(p_app->renderer, dispatch); */
         }
         return;
     }
 
-    /* ── Статус лифта (opcode=0xDA) ───────────────────────────────────────── */
     if (p_frame->opcode == MU_OPCODE_ELEVATOR_STATUS)
     {
         parsed_frame_t payload;
@@ -178,13 +202,12 @@ static void on_uart_frame(const mu_frame_t *p_frame, void *p_ctx)
         return;
     }
 
-    /* ── Неизвестный opcode ───────────────────────────────────────────────── */
     g_s_stats.unknown_opcodes++;
     syslog(LOG_DEBUG, "uart: unknown opcode 0x%02X len=%u", (unsigned) p_frame->opcode,
            (unsigned) p_frame->data_len);
 }
 
-/* ─── Инициализация signalfd ─────────────────────────────────────────────── */
+/* ─── signalfd ───────────────────────────────────────────────────────────── */
 
 static int setup_signalfd(void)
 {
@@ -210,10 +233,7 @@ static int setup_signalfd(void)
 
 /* ─── Обработка сигнала ──────────────────────────────────────────────────── */
 
-/**
- * @return 1 если нужно завершить цикл, 0 иначе.
- */
-static int handle_signal(const struct signalfd_siginfo *p_si)
+static int handle_signal(const struct signalfd_siginfo *p_si, app_t *p_app)
 {
     switch (p_si->ssi_signo)
     {
@@ -224,7 +244,7 @@ static int handle_signal(const struct signalfd_siginfo *p_si)
 
     case SIGCHLD:
         syslog(LOG_DEBUG, "SIGCHLD: child pid=%u status=%u", p_si->ssi_pid, p_si->ssi_status);
-        /* Фаза 3: video_player_check_and_restart(p_app->video); */
+        video_player_check_and_restart(p_app->video);
         break;
 
     default:
@@ -234,7 +254,7 @@ static int handle_signal(const struct signalfd_siginfo *p_si)
     return 0;
 }
 
-/* ─── Инициализация timerfd ──────────────────────────────────────────────── */
+/* ─── timerfd ────────────────────────────────────────────────────────────── */
 
 static int setup_timerfd(void)
 {
@@ -260,13 +280,16 @@ static int setup_timerfd(void)
 
 /* ─── Watchdog tick ──────────────────────────────────────────────────────── */
 
-static void on_watchdog_tick(void)
+static void on_watchdog_tick(const app_t *p_app)
 {
     syslog(LOG_NOTICE,
            "watchdog: frames_ok=%u parse_errors=%u unknown_opcodes=%u | "
-           "last: floor=%d arrow=%d mode=%d",
+           "last: floor=%d arrow=%d mode=%d | "
+           "omxplayer_pid=%d win=%d,%d,%dx%d",
            g_s_stats.frames_ok, g_s_stats.parse_errors, g_s_stats.unknown_opcodes,
-           g_s_stats.last_floor_num, g_s_stats.last_arrow, g_s_stats.last_mode);
+           g_s_stats.last_floor_num, g_s_stats.last_arrow, g_s_stats.last_mode,
+           video_player_get_pid(p_app->video), p_app->cfg.video_win_x, p_app->cfg.video_win_y,
+           p_app->cfg.video_win_w, p_app->cfg.video_win_h);
 }
 
 /* ─── Инициализация UART ─────────────────────────────────────────────────── */
@@ -288,7 +311,7 @@ static uart_t *open_uart(app_t *p_app)
 int main(int argc, char *p_argv[])
 {
     openlog("indicator", LOG_PID | LOG_CONS, LOG_DAEMON);
-    syslog(LOG_NOTICE, "indicator starting (phase-2)");
+    syslog(LOG_NOTICE, "indicator starting (phase-3)");
 
     const char *p_config_path = parse_config_path(argc, p_argv);
 
@@ -299,17 +322,34 @@ int main(int argc, char *p_argv[])
     (void) memset(&g_s_stats, 0, sizeof(g_s_stats));
     state_init(&app.state);
 
-    /* ── Конфиг ──────────────────────────────────────────────────────────── */
+    /* ── nku_scheme.toml ─────────────────────────────────────────────────── */
 
     if (config_load(p_config_path, &app.cfg) < 0)
     {
-        syslog(LOG_WARNING, "config: file not found '%s', using defaults", p_config_path);
+        syslog(LOG_WARNING, "config: '%s' not found, using defaults", p_config_path);
     }
     else
     {
-        syslog(LOG_INFO, "config: sound=%d%% music=%d%% load_idx=%d | path=%s",
-               app.cfg.sound_volume_percent, app.cfg.music_volume_percent,
-               app.cfg.load_capacity_idx, p_config_path);
+        syslog(LOG_INFO, "config: sound=%d%% music=%d%% load_idx=%d", app.cfg.sound_volume_percent,
+               app.cfg.music_volume_percent, app.cfg.load_capacity_idx);
+    }
+
+    /* ── video.toml (sibling файл рядом с nku_scheme.toml) ──────────────── */
+
+    char video_cfg_path[256];
+    derive_sibling_path(p_config_path, VIDEO_CONFIG_FILENAME, video_cfg_path,
+                        sizeof(video_cfg_path));
+
+    if (video_config_load(video_cfg_path, &app.cfg) < 0)
+    {
+        syslog(LOG_INFO, "video config: '%s' not found, using defaults win=%d,%d,%dx%d",
+               video_cfg_path, app.cfg.video_win_x, app.cfg.video_win_y, app.cfg.video_win_w,
+               app.cfg.video_win_h);
+    }
+    else
+    {
+        syslog(LOG_INFO, "video config: win=%d,%d,%dx%d", app.cfg.video_win_x, app.cfg.video_win_y,
+               app.cfg.video_win_w, app.cfg.video_win_h);
     }
 
     /* ── signalfd ─────────────────────────────────────────────────────────── */
@@ -329,8 +369,23 @@ int main(int argc, char *p_argv[])
         goto fail_early;
     }
 
-    /* ── Video player (Фаза 3) ────────────────────────────────────────────── */
-    /* TODO: app.video = video_player_open(&app.cfg); */
+    /* ── Video player ────────────────────────────────────────────────────── */
+
+    const video_window_t win = {
+        .x      = app.cfg.video_win_x,
+        .y      = app.cfg.video_win_y,
+        .width  = app.cfg.video_win_w,
+        .height = app.cfg.video_win_h,
+    };
+
+    app.video = video_player_open(VIDEO_PATH, win);
+    if (app.video == NULL)
+    {
+        syslog(LOG_CRIT, "video_player_open failed, cannot start");
+        (void) close(timer_fd);
+        (void) close(sig_fd);
+        goto fail_early;
+    }
 
     /* ── Renderer (Фаза 4) ────────────────────────────────────────────────── */
     /* TODO: app.renderer = renderer_init(&app.cfg); */
@@ -343,6 +398,7 @@ int main(int argc, char *p_argv[])
     app.uart = open_uart(&app);
     if (app.uart == NULL)
     {
+        video_player_close(app.video);
         (void) close(timer_fd);
         (void) close(sig_fd);
         goto fail_early;
@@ -359,7 +415,7 @@ int main(int argc, char *p_argv[])
     fds[FD_TIMER].fd     = timer_fd;
     fds[FD_TIMER].events = POLLIN;
 
-    syslog(LOG_NOTICE, "event loop started");
+    syslog(LOG_NOTICE, "event loop started, omxplayer_pid=%d", video_player_get_pid(app.video));
 
     int running = 1;
     while (running != 0)
@@ -368,49 +424,40 @@ int main(int argc, char *p_argv[])
         if (ret < 0)
         {
             if (errno == EINTR)
-            {
                 continue;
-            }
             syslog(LOG_ERR, "poll: %s", strerror(errno));
             break;
         }
 
-        /* ── UART ─────────────────────────────────────────────────────────── */
         if ((fds[FD_UART].revents & POLLIN) != 0)
         {
             if (uart_process_rx(app.uart) < 0)
-            {
                 syslog(LOG_ERR, "uart_process_rx: %s", strerror(errno));
-            }
         }
         if ((fds[FD_UART].revents & (POLLERR | POLLHUP)) != 0)
         {
             syslog(LOG_ERR, "uart: device error revents=0x%x", (unsigned) fds[FD_UART].revents);
         }
 
-        /* ── Сигналы ──────────────────────────────────────────────────────── */
         if ((fds[FD_SIG].revents & POLLIN) != 0)
         {
             struct signalfd_siginfo si;
             if (read(sig_fd, &si, sizeof(si)) == (ssize_t) sizeof(si))
             {
-                running = !handle_signal(&si);
+                running = !handle_signal(&si, &app);
             }
         }
 
-        /* ── Watchdog tick ────────────────────────────────────────────────── */
         if ((fds[FD_TIMER].revents & POLLIN) != 0)
         {
             uint64_t exp = 0U;
             if (read(timer_fd, &exp, sizeof(exp)) == (ssize_t) sizeof(exp))
             {
-                on_watchdog_tick();
+                on_watchdog_tick(&app);
             }
         }
 
-        /* ── Media FIFO (Фаза 7) ──────────────────────────────────────────── */
-        /* if ((fds[FD_FIFO].revents & POLLIN) != 0)
-         *     media_ipc_process(p_app); */
+        /* FD_FIFO (Фаза 7) */
     }
 
     /* ── Cleanup ──────────────────────────────────────────────────────────── */
@@ -419,10 +466,10 @@ int main(int argc, char *p_argv[])
            g_s_stats.parse_errors);
 
     uart_close(app.uart);
+    video_player_close(app.video);
     (void) close(timer_fd);
     (void) close(sig_fd);
 
-    /* TODO Фаза 3: video_player_close(app.video);   */
     /* TODO Фаза 4: renderer_destroy(app.renderer);  */
     /* TODO Фаза 5: audio_player_close(app.audio);   */
 
