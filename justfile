@@ -43,7 +43,7 @@ test:
     @just build::test
 
 
-[doc('Полный цикл: сборка в Docker → деплой на Pi (запускать с ХОСТА)')]
+[doc('Полный цикл: сборка в Docker → деплой на Pi → проверка ресурсов → рестарт (запускать с ХОСТА)')]
 ship:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -56,4 +56,8 @@ ship:
         just build::pi
     echo "  📤  Deploying to Pi..."
     just pi::deploy
+    echo "  🔍  Checking resources on Pi..."
+    just pi::check-resources
+    echo "  🔄  Restarting indicator..."
+    just pi::restart
     echo "  ✅  Ship complete"

@@ -2,7 +2,7 @@
 
 > Проект: Lift Indicator
 > Устройство: Raspberry Pi Zero W (ARM1176JZF-S, ARMv6, Debian Buster)
-
+> ssh-add --apple-use-keychain ~/.ssh/id_ed25519 - Добавить ключ в агент с сохранением в Keychain (--apple-use-keychain)
 ---
 
 ## Концепция

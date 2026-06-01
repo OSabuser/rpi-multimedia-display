@@ -156,6 +156,46 @@ bootstrap:
     echo "  Next: open project in VSCode → 'Reopen in Container'"
     echo ""
 
+[doc('Скопировать libpng + zlib с Pi для кросс-компиляции (один раз)')]
+[group('setup')]
+fetch-png-sysroot:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    DEST="build-env/pi-sysroot/usr"
+    PI="{{PI_USER}}@{{PI_HOST}}"
+
+    echo "  📦  Checking libpng-dev on Pi..."
+    ssh "${PI}" "dpkg -s libpng-dev &>/dev/null || sudo apt-get install -y libpng-dev zlib1g-dev"
+
+    echo "  📦  Fetching headers from ${PI}..."
+    mkdir -p "${DEST}/include"
+    # -L = dereference symlinks (png.h → libpng16/png.h)
+    rsync -avzL \
+        "${PI}:/usr/include/png.h" \
+        "${PI}:/usr/include/pngconf.h" \
+        "${PI}:/usr/include/pnglibconf.h" \
+        "${PI}:/usr/include/zlib.h" \
+        "${PI}:/usr/include/zconf.h" \
+        "${DEST}/include/"
+
+    echo "  📦  Fetching shared libs (.so) from ${PI}..."
+    mkdir -p "${DEST}/lib/arm-linux-gnueabihf"
+    # -L dereferences: libpng16.so -> libpng16.so.16 (реальный файл)
+    # Линкеру нужен файл с именем libpng16.so; runtime Pi использует libpng16.so.16
+    rsync -avzL \
+        "${PI}:/usr/lib/arm-linux-gnueabihf/libpng16.so" \
+        "${PI}:/usr/lib/arm-linux-gnueabihf/libz.so" \
+        "${DEST}/lib/arm-linux-gnueabihf/"
+
+    echo ""
+    echo "  ✅  PNG sysroot ready:"
+    echo "    headers: $(ls ${DEST}/include/png.h ${DEST}/include/zlib.h)"
+    echo "    libs:    $(ls ${DEST}/lib/arm-linux-gnueabihf/libpng16.so ${DEST}/lib/arm-linux-gnueabihf/libz.so)"
+    echo ""
+    echo "  ℹ️  Используем динамическую линковку (.so)."
+    echo "     libpng16.a из Pi содержит ARMv7 код и несовместима с ARMv6 (Pi Zero W)."
+
 # =============================================================================
 # ГРУППА: deploy — деплой на Pi
 # =============================================================================
@@ -238,7 +278,22 @@ deploy-sounds sounds_dir:
     echo "  📤  Syncing sounds from {{sounds_dir}}..."
     rsync -avz --progress "{{sounds_dir}}/" "{{_pi}}:{{PI_DIR}}/sounds/"
     echo "  ✅  Sounds deployed"
+    
+[doc('Проверить наличие и корректность всех PNG/WAV ресурсов на Pi')]
+[group('deploy')]
+check-resources:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    PI="{{PI_USER}}@{{PI_HOST}}"
+    PI_DIR="{{PI_DIR}}"
 
+    echo "  🔍  Checking resources on ${PI}:${PI_DIR}/resources..."
+    echo ""
+
+    # Скопировать свежий скрипт на Pi и запустить
+    scp scripts/check_resources.sh "${PI}:/tmp/check_resources.sh"
+    ssh "${PI}" "bash /tmp/check_resources.sh --dir ${PI_DIR}/resources"
+    
 # =============================================================================
 # ГРУППА: control — управление сервисами на Pi
 # =============================================================================
@@ -254,17 +309,17 @@ restart:
 status:
     ssh "{{_pi}}" "systemctl status indicator.service media-ingest.service --no-pager"
 
-[doc('Запустить все сервисы')]
+[doc('Запустить indicator')]
 [group('control')]
 start:
-    ssh "{{_pi}}" "sudo systemctl start indicator.target"
-    @echo "  ✅  indicator.target started"
+    ssh "{{_pi}}" "sudo systemctl start indicator.service"
+    @echo "  ✅  indicator.service started"
 
-[doc('Остановить все сервисы')]
+[doc('Остановить indicator')]
 [group('control')]
 stop:
-    ssh "{{_pi}}" "sudo systemctl stop indicator.target"
-    @echo "  ⏹️   indicator.target stopped"
+    ssh "{{_pi}}" "sudo systemctl stop indicator.service"
+    @echo "  ⏹️   indicator.service stopped"
 
 # =============================================================================
 # ГРУППА: logs — просмотр логов

@@ -1,84 +1,64 @@
 /**
- * @file config.h
- * @brief Конфигурация индикатора.
+ * @file src/config/config.h
+ * @brief Конфигурация приложения.
  *
- * Два источника конфигурации:
- *   nku_scheme.toml — MCU-синхронизируемые параметры (звук, музыка, нагрузка).
- *   video.toml      — Pi-hardware параметры (окно воспроизведения видео).
- *
- * Оба файла парсятся в одну структуру config_t.
- * Отсутствие любого файла не является ошибкой — используются defaults.
+ * Три источника:
+ *   nku_scheme.toml  — параметры, синхронизируемые с STM32 (не трогаем)
+ *   video.toml       — параметры окна omxplayer
+ *   renderer.toml    — позиции слотов DispmanX, директория ресурсов (Phase 4)
  */
-
 #pragma once
 
-/* ─── Defaults ───────────────────────────────────────────────────────────── */
+#include "renderer/renderer.h" /* renderer_config_t */
 
-#define CONFIG_DEFAULT_SOUND_VOLUME 50 /* % */
-#define CONFIG_DEFAULT_MUSIC_VOLUME 0  /* % */
-#define CONFIG_DEFAULT_LOAD_IDX     0  /* индекс в possible_values: "СКРЫТО" */
+/* ─── Дефолты — используются в config_load при отсутствии файла ──────────── */
+
+#define CONFIG_DEFAULT_SOUND_VOLUME 70
+#define CONFIG_DEFAULT_MUSIC_VOLUME 50
+#define CONFIG_DEFAULT_LOAD_IDX     0
 
 #define CONFIG_DEFAULT_VIDEO_WIN_X 0
 #define CONFIG_DEFAULT_VIDEO_WIN_Y 0
 #define CONFIG_DEFAULT_VIDEO_WIN_W 600
 #define CONFIG_DEFAULT_VIDEO_WIN_H 1024
 
-/* ─── Структура конфигурации ─────────────────────────────────────────────── */
+/* ─── Единая структура конфигурации ───────────────────────────────────────── */
 
 typedef struct config_s
 {
-    /* ── Из nku_scheme.toml ─────────────────────────────────────────────── */
+    /* ── nku_scheme.toml ──────────────────────────────────────────────────── */
+    int sound_volume_percent; /**< Громкость звука (0–100)        */
+    int music_volume_percent; /**< Громкость музыки (0–100)       */
+    int load_capacity_idx;    /**< Индекс иконки грузоподъёмности */
 
-    /** Громкость звуковых событий, % (0–100). */
-    int sound_volume_percent;
+    /* ── video.toml ───────────────────────────────────────────────────────── */
+    int video_win_x; /**< Позиция окна omxplayer X (px) */
+    int video_win_y; /**< Позиция окна omxplayer Y (px) */
+    int video_win_w; /**< Ширина окна omxplayer (px)    */
+    int video_win_h; /**< Высота окна omxplayer (px)    */
 
-    /** Громкость фоновой музыки, % (0–100). */
-    int music_volume_percent;
-
-    /**
-     * Индекс выбранной грузоподъёмности в массиве possible_values секции
-     * [loadcapacity]. 0 = "СКРЫТО".
-     */
-    int load_capacity_idx;
-
-    /* ── Из video.toml ──────────────────────────────────────────────────── */
-
-    /** Окно воспроизведения omxplayer: левый край, пиксели. */
-    int video_win_x;
-
-    /** Окно воспроизведения omxplayer: верхний край, пиксели. */
-    int video_win_y;
-
-    /** Окно воспроизведения omxplayer: ширина, пиксели. */
-    int video_win_w;
-
-    /** Окно воспроизведения omxplayer: высота, пиксели. */
-    int video_win_h;
+    /* ── renderer.toml (Phase 4) ──────────────────────────────────────────── */
+    renderer_config_t rdr;
 } config_t;
 
 /* ─── API ────────────────────────────────────────────────────────────────── */
 
 /**
- * config_load — загрузить nku_scheme.toml в структуру config_t.
- *
- * Всегда инициализирует *out дефолтами перед парсингом.
- *
- * @param path  путь к nku_scheme.toml; NULL допустим → только дефолты
- * @param out   заполняется результатом
- * @return      0 при успехе, -1 если файл не найден или path == NULL
- *              (в обоих случаях дефолты уже выставлены)
+ * config_load — загрузить nku_scheme.toml.
+ * При отсутствии файла — дефолты, возврат -1.
  */
-int config_load(const char *path, config_t *out);
+int config_load(const char *path, config_t *cfg);
 
 /**
- * video_config_load — загрузить video.toml и переопределить video_win_* поля.
- *
- * Вызывается ПОСЛЕ config_load (которая выставляет дефолты).
- * Файл не найден — не ошибка, дефолты остаются.
- * Частичный файл — только присутствующие ключи переопределяются.
- *
- * @param path  путь к video.toml; NULL допустим → ничего не меняется
- * @param out   структура config_t, уже инициализированная config_load
- * @return      0 при успехе, -1 если файл не найден или path == NULL
+ * video_config_load — загрузить video.toml.
+ * Заполняет только поля video_win_* в cfg.
  */
-int video_config_load(const char *path, config_t *out);
+int video_config_load(const char *path, config_t *cfg);
+
+/**
+ * renderer_config_load — загрузить renderer.toml.
+ * Заполняет renderer_config_t напрямую (не весь config_t).
+ * Дефолты: позиции из indicator.h, resources_dir=/home/pi/indicator/resources.
+ * @return 0 при успехе, -1 при ошибке / отсутствии файла.
+ */
+int renderer_config_load(const char *path, renderer_config_t *cfg);

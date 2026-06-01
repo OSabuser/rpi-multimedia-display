@@ -31,4 +31,4 @@ StandardError=journal
 SyslogIdentifier=indicator
 
 [Install]
-WantedBy=indicator.target
+WantedBy=multi-user.target

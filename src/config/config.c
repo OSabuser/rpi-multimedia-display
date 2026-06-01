@@ -373,3 +373,163 @@ int video_config_load(const char *path, config_t *out)
     fclose(f);
     return 0;
 }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * renderer_config_load — загрузить renderer.toml
+ *
+ * Поддерживаемый формат (аналогичен video.toml):
+ *   [renderer]
+ *   resources_dir = /home/pi/indicator/resources   ← строка без кавычек
+ *
+ *   [slot.digit_left]
+ *   x = 15
+ *   y = 675
+ *
+ *   [slot.digit_right]
+ *   x = 185
+ *   y = 675
+ *
+ *   [slot.arrow]
+ *   x = 391
+ *   y = 745
+ *
+ *   [slot.weight]
+ *   x = 333
+ *   y = 37
+ *
+ * Дефолты всегда выставляются до открытия файла.
+ * При отсутствии файла возвращает -1, дефолты сохраняются.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+static void renderer_config_set_defaults(renderer_config_t *cfg)
+{
+    /* Путь к ресурсам */
+    strncpy(cfg->resources_dir, "/home/pi/indicator/resources", RENDERER_RESOURCES_DIR_MAX - 1U);
+    cfg->resources_dir[RENDERER_RESOURCES_DIR_MAX - 1U] = '\0';
+
+    /* Позиции из indicator.h оригинального проекта:
+     *   LEFT_CHAR_X_POS_PX       = 15
+     *   LEFT_CHAR_Y_POS_PX       = 675
+     *   RIGHT_CHAR_X_POS_PX      = 185
+     *   ARROW_ICON_X_POSITION_PX = 391
+     *   ARROW_ICON_Y_POSITION_PX = 745
+     *   WEIGHT_BAR_X_POSITION_PX = 333
+     *   WEIGHT_BAR_Y_POSITION_PX = 37
+     */
+    cfg->digit_left_x  = 15;
+    cfg->digit_left_y  = 675;
+    cfg->digit_right_x = 185;
+    cfg->digit_right_y = 675;
+    cfg->arrow_x       = 391;
+    cfg->arrow_y       = 745;
+    cfg->weight_x      = 333;
+    cfg->weight_y      = 37;
+}
+
+int renderer_config_load(const char *path, renderer_config_t *cfg)
+{
+    renderer_config_set_defaults(cfg);
+
+    if (path == NULL)
+        return -1;
+
+    FILE *f = fopen(path, "r");
+    if (f == NULL)
+        return -1;
+
+    char section[64] = "";
+    char line[LINE_MAX];
+
+    while (fgets(line, sizeof(line), f) != NULL)
+    {
+        /* Удалить комментарий */
+        char *comment = strchr(line, '#');
+        if (comment)
+            *comment = '\0';
+
+        trim(line);
+        if (line[0] == '\0')
+            continue;
+
+        /* ── Заголовок секции: [renderer], [slot.digit_left] и т.д. ──────── */
+        if (line[0] == '[')
+        {
+            char *end = strchr(line + 1, ']');
+            if (end != NULL)
+            {
+                size_t len = (size_t) (end - (line + 1));
+                if (len >= sizeof(section))
+                    len = sizeof(section) - 1U;
+                memcpy(section, line + 1, len);
+                section[len] = '\0';
+                trim(section);
+            }
+            continue;
+        }
+
+        /* ── key = value ──────────────────────────────────────────────────── */
+        char *eq = strchr(line, '=');
+        if (eq == NULL)
+            continue;
+
+        /* Ключ */
+        char key[VALUE_MAX];
+        size_t klen = (size_t) (eq - line);
+        if (klen == 0 || klen >= VALUE_MAX)
+            continue;
+        memcpy(key, line, klen);
+        key[klen] = '\0';
+        trim(key);
+
+        /* Значение — в отдельном буфере чтобы trim не портил line */
+        char val[VALUE_MAX];
+        strncpy(val, eq + 1, VALUE_MAX - 1);
+        val[VALUE_MAX - 1] = '\0';
+        trim(val);
+
+        if (val[0] == '\0')
+            continue;
+
+        /* ── Диспетчеризация по секции ────────────────────────────────────── */
+        if (strcmp(section, "renderer") == 0)
+        {
+            if (strcmp(key, "resources_dir") == 0)
+            {
+                strncpy(cfg->resources_dir, val, RENDERER_RESOURCES_DIR_MAX - 1U);
+                cfg->resources_dir[RENDERER_RESOURCES_DIR_MAX - 1U] = '\0';
+            }
+        }
+        else if (strcmp(section, "slot.digit_left") == 0)
+        {
+            if (strcmp(key, "x") == 0)
+                cfg->digit_left_x = atoi(val);
+            else if (strcmp(key, "y") == 0)
+                cfg->digit_left_y = atoi(val);
+        }
+        else if (strcmp(section, "slot.digit_right") == 0)
+        {
+            if (strcmp(key, "x") == 0)
+                cfg->digit_right_x = atoi(val);
+            else if (strcmp(key, "y") == 0)
+                cfg->digit_right_y = atoi(val);
+        }
+        else if (strcmp(section, "slot.arrow") == 0)
+        {
+            if (strcmp(key, "x") == 0)
+                cfg->arrow_x = atoi(val);
+            else if (strcmp(key, "y") == 0)
+                cfg->arrow_y = atoi(val);
+        }
+        else if (strcmp(section, "slot.weight") == 0)
+        {
+            if (strcmp(key, "x") == 0)
+                cfg->weight_x = atoi(val);
+            else if (strcmp(key, "y") == 0)
+                cfg->weight_y = atoi(val);
+        }
+        /* Неизвестные секции/ключи — молча игнорируются */
+    }
+
+    fclose(f);
+    return 0;
+}
