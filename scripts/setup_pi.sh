@@ -1,46 +1,44 @@
 #!/usr/bin/env bash
 # =============================================================================
-# scripts/setup_pi.sh — первичная настройка Raspberry Pi Zero 2W
-# Запускать: just pi::setup-pi (через SSH с sudo)
+# scripts/setup_pi.sh — первичная настройка Raspberry Pi Zero W
+# Запускать: just pi::setup-pi  (через SSH с sudo)
 #
 # Выполняется ОДИН РАЗ на свежем Raspbian Buster Lite.
+# После этого: just pi::deploy-resources, deploy-sounds, deploy-configs, deploy
 # =============================================================================
 set -euo pipefail
 
 BOLD="\033[1m"; GREEN="\033[0;32m"; YELLOW="\033[1;33m"; RESET="\033[0m"
 
 step() { echo -e "\n${BOLD}>>> ${*}${RESET}"; }
-ok()   { echo -e "  ${GREEN}✅ ${*}${RESET}"; }
-warn() { echo -e "  ${YELLOW}⚠️  ${*}${RESET}"; }
+ok()   { echo -e "  ${GREEN}✅  ${*}${RESET}"; }
+warn() { echo -e "  ${YELLOW}⚠️   ${*}${RESET}"; }
 
-step "Обновление системы"
-fix_buster_apt_sources() {
-    echo "[setup] Fixing Raspbian Buster archived repositories..."
+IND="/home/pi/indicator"
+DATA="/data"
 
-    # Основной Debian Buster → архив
-    sudo tee /etc/apt/sources.list > /dev/null <<'EOF'
+# ─── 1. APT sources (Buster archived) ────────────────────────────────────────
+
+step "Обновление системы (Buster archived repos)"
+
+tee /etc/apt/sources.list > /dev/null <<'SOURCES'
 deb http://archive.debian.org/debian buster main contrib non-free
 deb http://archive.debian.org/debian-security buster/updates main contrib non-free
-EOF
+SOURCES
 
-    # Raspbian → архив
-    sudo tee /etc/apt/sources.list.d/raspi.list > /dev/null <<'EOF'
+tee /etc/apt/sources.list.d/raspi.list > /dev/null <<'SOURCES'
 deb http://archive.raspberrypi.org/debian/ buster main
-EOF
+SOURCES
 
-    # Отключить проверку дат (архив — старые Release-файлы)
-    sudo tee /etc/apt/apt.conf.d/99archive > /dev/null <<'EOF'
+tee /etc/apt/apt.conf.d/99archive > /dev/null <<'CONF'
 Acquire::Check-Valid-Until "false";
-EOF
-
-    echo "[setup] Sources fixed."
-}
-
-fix_buster_apt_sources
+CONF
 
 apt-get update -q
 apt-get full-upgrade -y -q
 ok "System updated"
+
+# ─── 2. Пакеты ───────────────────────────────────────────────────────────────
 
 step "Установка пакетов"
 apt-get install -y -q \
@@ -53,14 +51,18 @@ apt-get install -y -q \
     git
 ok "Packages installed"
 
+# ─── 3. Отключение лишних сервисов ───────────────────────────────────────────
+
 step "Отключение лишних сервисов"
 systemctl disable --now hciuart bluetooth               2>/dev/null || true
 systemctl disable --now serial-getty@ttyAMA0.service    2>/dev/null || true
 systemctl disable --now triggerhappy.service            2>/dev/null || true
 ok "Unnecessary services disabled"
 
+# ─── 4. ALSA softvol для MAX98357 ────────────────────────────────────────────
+
 step "Настройка ALSA softvol для MAX98357"
-cat > /etc/asound.conf << 'EOF'
+cat > /etc/asound.conf << 'ALSA'
 # Программный регулятор громкости для MAX98357 (hifiberry-dac)
 # MAX98357 не имеет аппаратного volume control в ALSA
 pcm.!default {
@@ -76,29 +78,91 @@ ctl.!default {
     type    hw
     card    0
 }
-EOF
+ALSA
 ok "ALSA softvol configured: /etc/asound.conf"
 
+# ─── 5. /data structure (мутабельные данные устройства) ──────────────────────
+
+step "Создание /data структуры"
+mkdir -p \
+    "$DATA/pi_nku_configs" \
+    "$DATA/resources/chars" \
+    "$DATA/resources/arrows" \
+    "$DATA/resources/modes" \
+    "$DATA/resources/weights" \
+    "$DATA/resources/notifications" \
+    "$DATA/sounds" \
+    "$DATA/videos"
+chown -R pi:pi "$DATA"
+ok "/data structure created"
+
+# ─── 6. /home/pi/indicator/ (бинари + точки монтирования) ───────────────────
+
 step "Создание директорий приложения"
-mkdir -p /home/pi/indicator/{configs/device,videos,scripts}
-mkdir -p /home/pi/indicator/resources/{chars,arrows,modes,weights,notifications}
-mkdir -p /home/pi/indicator/sounds
-chown -R pi:pi /home/pi/indicator
+mkdir -p \
+    "$IND/scripts" \
+    "$IND/tools" \
+    "$IND/pi_nku_configs" \
+    "$IND/resources" \
+    "$IND/sounds" \
+    "$IND/videos"
+chown -R pi:pi "$IND"
 ok "Application directories created"
 
-step "Создание FIFO для IPC (indicator ↔ media_ingest)"
-cat > /etc/tmpfiles.d/indicator.conf << 'EOF'
+# ─── 7. Bind-монты в /etc/fstab ──────────────────────────────────────────────
+
+step "Настройка bind-монтов (/data → $IND)"
+
+add_fstab_entry() {
+    local src="$1" dst="$2"
+    if grep -qF "$dst" /etc/fstab; then
+        warn "fstab: запись для $dst уже есть — пропускаем"
+    else
+        echo "$src $dst none bind 0 0" >> /etc/fstab
+        ok "fstab: $src → $dst"
+    fi
+}
+
+echo "" >> /etc/fstab
+echo "# indicator /data bind mounts (setup_pi.sh)" >> /etc/fstab
+add_fstab_entry "$DATA/pi_nku_configs" "$IND/pi_nku_configs"
+add_fstab_entry "$DATA/resources"      "$IND/resources"
+add_fstab_entry "$DATA/sounds"         "$IND/sounds"
+add_fstab_entry "$DATA/videos"         "$IND/videos"
+
+# Примонтировать сразу (не ждать reboot)
+mount --bind "$DATA/pi_nku_configs" "$IND/pi_nku_configs"
+mount --bind "$DATA/resources"      "$IND/resources"
+mount --bind "$DATA/sounds"         "$IND/sounds"
+mount --bind "$DATA/videos"         "$IND/videos"
+ok "Bind mounts active"
+
+# ─── 8. IPC FIFO (indicator ↔ media_ingest) ──────────────────────────────────
+
+step "Создание FIFO для IPC"
+cat > /etc/tmpfiles.d/indicator.conf << 'TMPFILES'
 p /run/indicator-media.fifo 0660 pi pi -
-EOF
+TMPFILES
 systemd-tmpfiles --create /etc/tmpfiles.d/indicator.conf
-ok "IPC FIFO configured"
+ok "IPC FIFO configured: /run/indicator-media.fifo"
+
+# ─── 9. Маскировка getty@tty1 (для TUI при старте) ───────────────────────────
+
+step "Маскировка getty@tty1"
+systemctl mask getty@tty1.service
+ok "getty@tty1 masked"
+
+# ─── Итог ─────────────────────────────────────────────────────────────────────
 
 step "Итог"
 echo ""
 echo -e "  ${GREEN}${BOLD}Pi setup complete.${RESET}"
 echo ""
-echo "  Следующие шаги:"
-echo "  1. Проверить аудио:  aplay /usr/share/sounds/alsa/Front_Left.wav"
-echo "  2. Проверить видео:  omxplayer --layer 1 <test.mp4>"
-echo "  3. Создать образ:    just pi::backup-image /dev/rdisk<N>"
+echo "  Следующие шаги (с хоста):"
+echo "  1. just pi::deploy-resources   — PNG ресурсы → /data/resources/"
+echo "  2. just pi::deploy-sounds      — WAV звуки → /data/sounds/"
+echo "  3. just pi::deploy-configs     — конфиги → /data/pi_nku_configs/"
+echo "  4. just pi::deploy             — бинари + systemd units"
+echo "  5. just pi::restart"
+echo "  6. just pi::check-resources    — финальная проверка"
 echo ""

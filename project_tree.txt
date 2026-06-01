@@ -1,0 +1,408 @@
+.
+├── bootstrap.sh
+├── build
+├── build-env
+│   ├── 2023-05-03-raspios-buster-armhf-lite.img
+│   ├── config.txt
+│   ├── configs
+│   │   └── device
+│   │       ├── nku_scheme.toml
+│   │       ├── renderer.toml
+│   │       └── video.toml
+│   ├── Dockerfile
+│   ├── output.mp4
+│   ├── pi-sysroot
+│   │   ├── opt
+│   │   │   └── vc
+│   │   │       ├── bin
+│   │   │       ├── include
+│   │   │       ├── lib
+│   │   │       └── src
+│   │   ├── usr
+│   │   │   ├── include
+│   │   │   │   ├── png.h
+│   │   │   │   ├── pngconf.h
+│   │   │   │   ├── pnglibconf.h
+│   │   │   │   ├── zconf.h
+│   │   │   │   └── zlib.h
+│   │   │   └── lib
+│   │   │       └── arm-linux-gnueabihf
+│   │   └── vc
+│   │       ├── bin
+│   │       │   ├── containers_check_frame_int
+│   │       │   ├── containers_datagram_receiver
+│   │       │   ├── containers_datagram_sender
+│   │       │   ├── containers_dump_pktfile
+│   │       │   ├── containers_rtp_decoder
+│   │       │   ├── containers_stream_client
+│   │       │   ├── containers_stream_server
+│   │       │   ├── containers_test
+│   │       │   ├── containers_test_bits
+│   │       │   ├── containers_test_uri
+│   │       │   ├── containers_uri_pipe
+│   │       │   ├── dtmerge
+│   │       │   ├── dtoverlay
+│   │       │   ├── dtoverlay-post
+│   │       │   ├── dtoverlay-pre
+│   │       │   ├── dtparam -> dtoverlay
+│   │       │   ├── edidparser
+│   │       │   ├── mmal_vc_diag
+│   │       │   ├── raspistill
+│   │       │   ├── raspivid
+│   │       │   ├── raspividyuv
+│   │       │   ├── raspiyuv
+│   │       │   ├── tvservice
+│   │       │   ├── vcdbg
+│   │       │   ├── vcgencmd
+│   │       │   ├── vchiq_test
+│   │       │   ├── vcmailbox
+│   │       │   └── vcsmem
+│   │       ├── include
+│   │       │   ├── bcm_host.h
+│   │       │   ├── EGL
+│   │       │   ├── GLES
+│   │       │   ├── GLES2
+│   │       │   ├── IL
+│   │       │   ├── interface
+│   │       │   ├── KHR
+│   │       │   ├── vcinclude
+│   │       │   ├── VG
+│   │       │   └── WF
+│   │       ├── lib
+│   │       │   ├── libbcm_host.so
+│   │       │   ├── libbrcmEGL.so
+│   │       │   ├── libbrcmGLESv2.so
+│   │       │   ├── libbrcmOpenVG.so
+│   │       │   ├── libbrcmWFC.so
+│   │       │   ├── libcontainers.so
+│   │       │   ├── libdebug_sym_static.a
+│   │       │   ├── libdebug_sym.so
+│   │       │   ├── libdtovl.so
+│   │       │   ├── libEGL_static.a
+│   │       │   ├── libelftoolchain.so
+│   │       │   ├── libGLESv2_static.a
+│   │       │   ├── libkhrn_client.a
+│   │       │   ├── libkhrn_static.a
+│   │       │   ├── libmmal_components.so
+│   │       │   ├── libmmal_core.so
+│   │       │   ├── libmmal_util.so
+│   │       │   ├── libmmal_vc_client.so
+│   │       │   ├── libmmal.so
+│   │       │   ├── libopenmaxil.so
+│   │       │   ├── libvchiq_arm.so
+│   │       │   ├── libvchostif.a
+│   │       │   ├── libvcilcs.a
+│   │       │   ├── libvcos.so
+│   │       │   ├── libvcsm.so
+│   │       │   ├── pkgconfig
+│   │       │   └── plugins
+│   │       └── src
+│   │           └── hello_pi
+│   └── resources
+│       ├── arrows
+│       │   ├── down.png
+│       │   └── up.png
+│       ├── BACK.png
+│       ├── chars
+│       │   ├── 0.png
+│       │   ├── 1.png
+│       │   ├── 10.png
+│       │   ├── 11.png
+│       │   ├── 12.png
+│       │   ├── 13.png
+│       │   ├── 14.png
+│       │   ├── 15.png
+│       │   ├── 16.png
+│       │   ├── 17.png
+│       │   ├── 18.png
+│       │   ├── 19.png
+│       │   ├── 2.png
+│       │   ├── 20.png
+│       │   ├── 21.png
+│       │   ├── 22.png
+│       │   ├── 23.png
+│       │   ├── 24.png
+│       │   ├── 25.png
+│       │   ├── 26.png
+│       │   ├── 27.png
+│       │   ├── 28.png
+│       │   ├── 29.png
+│       │   ├── 3.png
+│       │   ├── 30.png
+│       │   ├── 31.png
+│       │   ├── 32.png
+│       │   ├── 33.png
+│       │   ├── 34.png
+│       │   ├── 35.png
+│       │   ├── 36.png
+│       │   ├── 37.png
+│       │   ├── 4.png
+│       │   ├── 5.png
+│       │   ├── 6.png
+│       │   ├── 7.png
+│       │   ├── 8.png
+│       │   └── 9.png
+│       ├── modes
+│       │   ├── calling.png
+│       │   ├── evacuation.png
+│       │   ├── firealarm.png
+│       │   ├── fireman.png
+│       │   ├── inspection.png
+│       │   ├── loading.png
+│       │   ├── malfunction.png
+│       │   ├── misc
+│       │   │   ├── 0.png
+│       │   │   ├── 1.png
+│       │   │   ├── 2.png
+│       │   │   ├── 3.png
+│       │   │   ├── 4.png
+│       │   │   ├── 5.png
+│       │   │   ├── 6.png
+│       │   │   ├── 7.png
+│       │   │   ├── 8.png
+│       │   │   ├── 9.png
+│       │   │   └── BLANK_60%.png
+│       │   ├── overload.png
+│       │   ├── seismo.png
+│       │   └── talking.png
+│       ├── promos
+│       │   ├── 8_with_arrow.png
+│       │   ├── 8_without_arrow.png
+│       │   ├── P1_with_arrow.png
+│       │   ├── P1_with_mode.png
+│       │   └── P1_without_arrow.png
+│       ├── RULES.md
+│       ├── sounds
+│       │   ├── 0.wav
+│       │   ├── 1.wav
+│       │   ├── 10.wav
+│       │   ├── 11.wav
+│       │   ├── 12.wav
+│       │   ├── 13.wav
+│       │   ├── 14.wav
+│       │   ├── 15.wav
+│       │   ├── 16.wav
+│       │   ├── 17.wav
+│       │   ├── 18.wav
+│       │   ├── 19.wav
+│       │   ├── 2.wav
+│       │   ├── 20-.wav
+│       │   ├── 20.wav
+│       │   ├── 3.wav
+│       │   ├── 30-.wav
+│       │   ├── 30.wav
+│       │   ├── 4.wav
+│       │   ├── 40-.wav
+│       │   ├── 40.wav
+│       │   ├── 5.wav
+│       │   ├── 6.wav
+│       │   ├── 7.wav
+│       │   ├── 8.wav
+│       │   ├── 9.wav
+│       │   ├── button.wav
+│       │   ├── closing.wav
+│       │   ├── down.wav
+│       │   ├── fire.wav
+│       │   ├── floor.wav
+│       │   ├── g_double.wav
+│       │   ├── g_single.wav
+│       │   ├── g_triple.wav
+│       │   ├── minus.wav
+│       │   ├── mus1.wav
+│       │   ├── mus2.wav
+│       │   ├── mus3.wav
+│       │   ├── mus4.wav
+│       │   ├── mus5.wav
+│       │   ├── mus6.wav
+│       │   ├── mus7.wav
+│       │   ├── opening.wav
+│       │   ├── overload.wav
+│       │   ├── podval.wav
+│       │   ├── s_close.wav
+│       │   ├── s_open.wav
+│       │   └── up.wav
+│       └── weights
+│           ├── load_0.png
+│           ├── load_1.png
+│           ├── load_10.png
+│           ├── load_11.png
+│           ├── load_12.png
+│           ├── load_13.png
+│           ├── load_14.png
+│           ├── load_15.png
+│           ├── load_2.png
+│           ├── load_3.png
+│           ├── load_4.png
+│           ├── load_5.png
+│           ├── load_6.png
+│           ├── load_7.png
+│           ├── load_8.png
+│           └── load_9.png
+├── cmake
+│   ├── Sanitizers.cmake
+│   ├── Toolchain-RPiZero2W.cmake
+│   ├── Toolchain-RPiZeroW.cmake
+│   └── Warnings.cmake
+├── CMakeLists.txt
+├── deploy
+│   ├── indicator.service
+│   ├── indicator.target
+│   ├── media-ingest.service
+│   └── MUp-rpi0
+├── docs
+│   ├── DEV_ARCH.md
+│   ├── plan
+│   │   ├── MASTER_PLAN.md
+│   │   ├── PHASE_0_REPORT.md
+│   │   ├── PHASE_1_REPORT.md
+│   │   ├── PHASE_2_REPORT.md
+│   │   ├── PHASE_3_REPORT.md
+│   │   └── PHASE_4_REPORT.md
+│   └── RPI_SYSROOT.md
+├── just
+│   ├── build.just
+│   ├── ci.just
+│   └── pi.just
+├── justfile
+├── platform
+│   └── dispmanx
+│       ├── CMakeLists.txt
+│       ├── layers
+│       │   ├── bits.h
+│       │   ├── element_change.h
+│       │   ├── image.c
+│       │   ├── image.h
+│       │   ├── imageLayer.c
+│       │   ├── imageLayer.h
+│       │   ├── loadpng.c
+│       │   └── loadpng.h
+│       └── renderer_impl.c
+├── project_tree.txt
+├── README.md
+├── scripts
+│   ├── check_resources.sh
+│   ├── setup_pi.sh
+│   └── smoke_test.sh
+├── src
+│   ├── audio
+│   │   ├── audio.c
+│   │   └── audio.h
+│   ├── config
+│   │   ├── config.c
+│   │   └── config.h
+│   ├── domain
+│   │   ├── floor.c
+│   │   ├── floor.h
+│   │   ├── sound_map.c
+│   │   ├── sound_map.h
+│   │   ├── state.c
+│   │   └── state.h
+│   ├── main.c
+│   ├── media
+│   │   ├── media_ipc.c
+│   │   └── media_ipc.h
+│   ├── player
+│   │   ├── video_player.c
+│   │   └── video_player.h
+│   ├── protocol
+│   │   ├── parser.c
+│   │   ├── parser.h
+│   │   └── types.h
+│   ├── README.md
+│   ├── renderer
+│   │   └── renderer.h
+│   └── transport
+│       ├── README.md
+│       ├── uart.c
+│       └── uart.h
+├── src_media_ingest
+│   ├── CMakeLists.txt
+│   └── main.c
+├── tests
+│   ├── CMakeLists.txt
+│   ├── test_config.c
+│   ├── test_floor.c
+│   ├── test_parser.c
+│   ├── test_sound_map.c
+│   ├── test_state.c
+│   ├── test_uart.c
+│   └── unity
+│       ├── unity_internals.h
+│       ├── unity.c
+│       └── unity.h
+├── third_party
+│   └── config_toolset
+│       ├── Cargo.lock
+│       ├── Cargo.toml
+│       ├── config_lib
+│       │   ├── Cargo.toml
+│       │   ├── examples
+│       │   │   ├── simple_config.toml
+│       │   │   └── simple.rs
+│       │   └── src
+│       │       ├── device_config.rs
+│       │       ├── lib.rs
+│       │       ├── serial_config.rs
+│       │       └── toml_parser.rs
+│       ├── Cross.toml
+│       ├── docs
+│       │   ├── build'n'deploy
+│       │   │   └── README.md
+│       │   └── vscode
+│       │       ├── Install.md
+│       │       └── vs_code_extensions_list.txt
+│       ├── logger
+│       │   ├── Cargo.toml
+│       │   ├── src
+│       │   │   ├── logger.rs
+│       │   │   └── main.rs
+│       │   ├── tests_output
+│       │   │   ├── uart_log_2025-12-10.txt
+│       │   │   └── uart_log_2025-12-11.txt
+│       │   └── TODO.md
+│       ├── menu_tui
+│       │   ├── assets
+│       │   │   └── style.toml
+│       │   ├── Cargo.toml
+│       │   ├── examples
+│       │   │   ├── simple_config.toml
+│       │   │   └── simple.rs
+│       │   ├── src
+│       │   │   ├── lib.rs
+│       │   │   ├── menu_navigation.rs
+│       │   │   ├── menu_process.rs
+│       │   │   ├── user_parameters.rs
+│       │   │   └── views
+│       │   └── TODO.md
+│       ├── MUp-arm
+│       ├── pi_nku_configs
+│       │   ├── menu_style.toml
+│       │   ├── nku_scheme.toml
+│       │   └── pi_scheme.toml
+│       ├── pi_nku_menu
+│       │   ├── assets
+│       │   │   └── style.toml
+│       │   ├── Cargo.toml
+│       │   └── src
+│       │       └── main.rs
+│       ├── pi_nku_sync
+│       │   ├── Cargo.toml
+│       │   └── src
+│       │       ├── main.rs
+│       │       ├── nku_client.rs
+│       │       └── serial_config.rs
+│       ├── protocol_lib
+│       │   ├── Cargo.toml
+│       │   ├── MU Protocol.md
+│       │   └── src
+│       │       ├── client.rs
+│       │       ├── inc_parser.rs
+│       │       ├── lib.rs
+│       │       └── mu_frame.rs
+│       └── README.md
+└── tools
+    ├── CMakeLists.txt
+    ├── README.md
+    └── uart_rx_dump.c
+
+87 directories, 319 files

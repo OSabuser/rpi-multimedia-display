@@ -12,7 +12,6 @@ PI_DIR    := env('PI_DIR',    '/home/pi/indicator')
 _pi       := PI_USER + "@" + PI_HOST
 
 JUST_MIN   := "1.36.0"
-UV_MIN     := "0.4.0"
 DOCKER_MIN := "24.0.0"
 
 set working-directory := '..'
@@ -76,7 +75,7 @@ check-deps:
     else fail "ssh not found"; fi
 
     if command -v rsync &>/dev/null; then ok "rsync found"
-    else warn "rsync not found — deploy will use scp fallback"; fi
+    else warn "rsync not found — deploy will fail"; fi
 
     echo ""
     if [[ $ERRORS -gt 0 ]]; then
@@ -109,7 +108,7 @@ fetch-sysroot:
     set -euo pipefail
     echo "  📦  Fetching /opt/vc from {{_pi}}..."
     rsync -av --delete \
-        "pi@${PI_HOST}:/opt/vc/" \
+        "{{PI_USER}}@{{PI_HOST}}:/opt/vc/" \
         "build-env/pi-sysroot/opt/vc/"
     echo "  ✅  Sysroot ready: build-env/pi-sysroot/opt/vc/"
 
@@ -123,12 +122,10 @@ build-image:
         exit 1
     fi
     echo "  🐳  Building Docker image indicator-build (linux/amd64)..."
-    docker build \
-        -t indicator-build \
-        build-env/
+    docker build -t indicator-build build-env/
     echo "  ✅  Docker image ready: indicator-build"
 
-[doc('Первичная настройка Pi: пакеты, ALSA, systemd units')]
+[doc('Первичная настройка Pi: пакеты, ALSA, /data layout, systemd')]
 [group('setup')]
 setup-pi:
     #!/usr/bin/env bash
@@ -136,6 +133,15 @@ setup-pi:
     echo "  🍓  Running setup_pi.sh on {{_pi}}..."
     ssh "{{_pi}}" "sudo bash -s" < scripts/setup_pi.sh
     echo "  ✅  Pi setup complete"
+
+[doc('Одноразовая миграция существующей Pi на /data layout')]
+[group('setup')]
+migrate-data:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "  🔄  Running migrate_data.sh on {{_pi}}..."
+    ssh "{{_pi}}" "sudo bash -s" < scripts/migrate_data.sh
+    echo "  ✅  Migration complete"
 
 [doc('Полная первичная настройка хоста: check-deps → setup-ssh → fetch-sysroot → build-image')]
 [group('setup')]
@@ -170,7 +176,6 @@ fetch-png-sysroot:
 
     echo "  📦  Fetching headers from ${PI}..."
     mkdir -p "${DEST}/include"
-    # -L = dereference symlinks (png.h → libpng16/png.h)
     rsync -avzL \
         "${PI}:/usr/include/png.h" \
         "${PI}:/usr/include/pngconf.h" \
@@ -181,8 +186,6 @@ fetch-png-sysroot:
 
     echo "  📦  Fetching shared libs (.so) from ${PI}..."
     mkdir -p "${DEST}/lib/arm-linux-gnueabihf"
-    # -L dereferences: libpng16.so -> libpng16.so.16 (реальный файл)
-    # Линкеру нужен файл с именем libpng16.so; runtime Pi использует libpng16.so.16
     rsync -avzL \
         "${PI}:/usr/lib/arm-linux-gnueabihf/libpng16.so" \
         "${PI}:/usr/lib/arm-linux-gnueabihf/libz.so" \
@@ -196,11 +199,17 @@ fetch-png-sysroot:
     echo "  ℹ️  Используем динамическую линковку (.so)."
     echo "     libpng16.a из Pi содержит ARMv7 код и несовместима с ARMv6 (Pi Zero W)."
 
+[doc('Установить gdbserver на Pi (один раз)')]
+[group('setup')]
+setup-gdbserver:
+    ssh "{{_pi}}" "sudo apt-get install -y gdbserver && gdbserver --version"
+    @echo "  ✅  gdbserver installed on Pi"
+
 # =============================================================================
 # ГРУППА: deploy — деплой на Pi
 # =============================================================================
 
-[doc('Задеплоить все бинари + скрипты + systemd units на Pi')]
+[doc('Задеплоить бинари + скрипты + systemd units на Pi')]
 [group('deploy')]
 deploy:
     #!/usr/bin/env bash
@@ -218,17 +227,18 @@ deploy:
         "{{_pi}}:{{PI_DIR}}/"
 
     # Диагностические утилиты
-    rsync -avz --progress \
-        "{{BUILD_DIR}}/pi/uart_rx_dump" \
-        "{{_pi}}:{{PI_DIR}}/tools/"
+    just pi::deploy-tools
 
     # Скрипты
-    rsync -avz --progress scripts/smoke_test.sh \
+    ssh "{{_pi}}" "mkdir -p {{PI_DIR}}/scripts"
+    rsync -avz --progress \
+        scripts/smoke_test.sh \
+        scripts/check_resources.sh \
         "{{_pi}}:{{PI_DIR}}/scripts/"
 
-    # systemd units
-    rsync -avz --progress deploy/ "{{_pi}}:/tmp/indicator-deploy/"
-    ssh "{{_pi}}" "sudo cp /tmp/indicator-deploy/*.service /etc/systemd/system/ && \
+    # systemd units (все файлы из deploy/systemd/)
+    rsync -avz --progress deploy/systemd/ "{{_pi}}:/tmp/indicator-systemd/"
+    ssh "{{_pi}}" "sudo cp /tmp/indicator-systemd/* /etc/systemd/system/ && \
                    sudo systemctl daemon-reload"
 
     echo "  ✅  Deploy complete"
@@ -245,7 +255,7 @@ deploy-bin:
         "{{_pi}}:{{PI_DIR}}/"
     echo "  ✅  Binaries deployed"
 
-[doc('Задеплоить только диагностические утилиты (uart_rx_dump и др.)')]
+[doc('Задеплоить диагностические утилиты: uart_rx_dump (сборка) + MUp-rpi0 (prebuilt)')]
 [group('deploy')]
 deploy-tools:
     #!/usr/bin/env bash
@@ -256,44 +266,60 @@ deploy-tools:
     fi
     echo "  📤  Deploying tools to {{_pi}}:{{PI_DIR}}/tools/..."
     ssh "{{_pi}}" "mkdir -p {{PI_DIR}}/tools"
+    # uart_rx_dump — компилируется из исходников
     rsync -avz --progress \
         "{{BUILD_DIR}}/pi/uart_rx_dump" \
         "{{_pi}}:{{PI_DIR}}/tools/"
+    # MUp-rpi0 — pre-built бинарь из репозитория
+    rsync -avz --progress \
+        deploy/tools/MUp-rpi0 \
+        "{{_pi}}:{{PI_DIR}}/tools/"
     echo "  ✅  Tools deployed"
 
-[doc('Задеплоить ресурсы (PNG, WAV, видео) на Pi')]
+[doc('Задеплоить device-конфиги в /data/pi_nku_configs (video.toml, renderer.toml, menu_style.toml)')]
 [group('deploy')]
-deploy-resources resources_dir:
+deploy-configs:
     #!/usr/bin/env bash
     set -euo pipefail
-    echo "  📤  Syncing resources from {{resources_dir}}..."
-    rsync -avz --progress "{{resources_dir}}/" "{{_pi}}:{{PI_DIR}}/resources/"
+    echo "  📤  Deploying configs to {{_pi}}:/data/pi_nku_configs/..."
+    rsync -avz --progress deploy/configs/ "{{_pi}}:/data/pi_nku_configs/"
+    echo "  ✅  Configs deployed"
+
+[doc('Задеплоить PNG-ресурсы в /data/resources')]
+[group('deploy')]
+deploy-resources:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "  📤  Syncing resources to {{_pi}}:/data/resources/..."
+    rsync -avz --progress deploy/resources/ "{{_pi}}:/data/resources/"
     echo "  ✅  Resources deployed"
 
-[doc('Задеплоить звуки на Pi')]
+[doc('Задеплоить WAV-звуки в /data/sounds')]
 [group('deploy')]
-deploy-sounds sounds_dir:
+deploy-sounds:
     #!/usr/bin/env bash
     set -euo pipefail
-    echo "  📤  Syncing sounds from {{sounds_dir}}..."
-    rsync -avz --progress "{{sounds_dir}}/" "{{_pi}}:{{PI_DIR}}/sounds/"
+    echo "  📤  Syncing sounds to {{_pi}}:/data/sounds/..."
+    rsync -avz --progress deploy/sounds/ "{{_pi}}:/data/sounds/"
     echo "  ✅  Sounds deployed"
-    
-[doc('Проверить наличие и корректность всех PNG/WAV ресурсов на Pi')]
+
+[doc('Проверить ресурсы, конфиги и bind-монты на Pi')]
 [group('deploy')]
 check-resources:
     #!/usr/bin/env bash
     set -euo pipefail
     PI="{{PI_USER}}@{{PI_HOST}}"
-    PI_DIR="{{PI_DIR}}"
-
-    echo "  🔍  Checking resources on ${PI}:${PI_DIR}/resources..."
+    echo "  🔍  Checking deployment on ${PI}..."
     echo ""
-
-    # Скопировать свежий скрипт на Pi и запустить
     scp scripts/check_resources.sh "${PI}:/tmp/check_resources.sh"
-    ssh "${PI}" "bash /tmp/check_resources.sh --dir ${PI_DIR}/resources"
-    
+    ssh "${PI}" "bash /tmp/check_resources.sh --dir /data/resources"
+
+[doc('Задеплоить debug-бинарь для анализа краша')]
+[group('deploy')]
+deploy-debug:
+    rsync -avz "{{BUILD_DIR}}/pi-debug/indicator" "{{_pi}}:{{PI_DIR}}/indicator-debug"
+    @echo "  ✅  Debug binary deployed"
+
 # =============================================================================
 # ГРУППА: control — управление сервисами на Pi
 # =============================================================================
@@ -351,7 +377,6 @@ dump:
     set -euo pipefail
     DUMP="{{PI_DIR}}/tools/uart_rx_dump"
 
-    # Проверить наличие утилиты
     ssh "{{_pi}}" "test -f ${DUMP}" || {
         echo "  ❌  uart_rx_dump not found. Run: just build::pi-dump && just pi::deploy-tools"
         exit 1
@@ -368,6 +393,7 @@ dump:
           ssh "{{_pi}}" "sudo systemctl start indicator.service"; \
           echo "  ✅  indicator restarted"' EXIT
 
+    # TODO (Шаг 1): читать port/baudrate из /data/pi_nku_configs/pi_scheme.toml
     ssh -t "{{_pi}}" "${DUMP} /dev/ttyAMA0 115200"
 
 [doc('Запустить uart_rx_dump без остановки indicator (только для наблюдения)')]
@@ -382,6 +408,7 @@ dump-passive:
     }
     echo "  ⚠️   indicator.service NOT stopped — порт занят, фреймы не придут"
     echo "  ℹ️   Используй just pi::dump для корректной диагностики"
+    # TODO (Шаг 1): читать port/baudrate из /data/pi_nku_configs/pi_scheme.toml
     ssh -t "{{_pi}}" "${DUMP} /dev/ttyAMA0 115200"
 
 # =============================================================================
@@ -403,15 +430,18 @@ smoke:
 test-audio:
     ssh "{{_pi}}" "aplay /usr/share/sounds/alsa/Front_Left.wav"
 
-[doc("Copy test video to Pi and play it")]
+[doc('Сгенерировать тестовое видео и воспроизвести на Pi')]
+[group('util')]
 test-video:
-    @echo "Generating test video..."
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "  🎬  Generating test video..."
     ffmpeg -f lavfi -i testsrc=duration=5:size=600x1024:rate=25 \
            -vcodec libx264 -pix_fmt yuv420p /tmp/indicator_test.mp4 -y 2>/dev/null
-    @echo "Copying to Pi..."
-    scp /tmp/indicator_test.mp4 ${PI_USER}@${PI_HOST}:/tmp/test.mp4
-    @echo "Playing on Pi (Ctrl+C to stop)..."
-    ssh ${PI_USER}@${PI_HOST} "omxplayer --no-osd --win 0,0,600,1024 --layer 1 /tmp/test.mp4"
+    echo "  📤  Copying to Pi..."
+    scp /tmp/indicator_test.mp4 "{{PI_USER}}@{{PI_HOST}}:/tmp/test.mp4"
+    echo "  ▶️   Playing on Pi (Ctrl+C to stop)..."
+    ssh "{{PI_USER}}@{{PI_HOST}}" "omxplayer --no-osd --win 0,0,600,1024 --layer 1 /tmp/test.mp4"
 
 [doc('Показать загрузку CPU/RAM на Pi')]
 [group('util')]
@@ -467,7 +497,6 @@ gdbserver-start:
         exit 1
     fi
     echo "  ✅  gdbserver running on Pi:${REMOTE_PORT}"
-
     echo "  🔗  Tunnel: localhost:${LOCAL_PORT} → {{_pi}}:${REMOTE_PORT}"
     echo "  ℹ️   Keep this terminal open while debugging. Ctrl+C to stop."
     echo ""
@@ -486,19 +515,7 @@ gdbserver-stop:
     ssh "{{_pi}}" "pkill -f gdbserver 2>/dev/null; true" || true
     @echo "  ⏹️   gdbserver stopped"
 
-[doc('Установить gdbserver на Pi (один раз)')]
-[group('setup')]
-setup-gdbserver:
-    ssh "{{_pi}}" "sudo apt-get install -y gdbserver && gdbserver --version"
-    @echo "  ✅  gdbserver installed on Pi"
-
 [doc('Смотреть stdout отлаживаемой программы')]
 [group('util')]
 debug-output:
     ssh "{{_pi}}" "tail -f /tmp/gdbserver.log"
-
-[doc('Задеплоить debug-бинарь для анализа краша')]
-[group('deploy')]
-deploy-debug:
-    rsync -avz build/pi-debug/indicator "{{_pi}}:{{PI_DIR}}/indicator-debug"
-    @echo "  ✅  Debug binary deployed"

@@ -202,6 +202,77 @@ if [[ $SOUND_WARNINGS -gt 0 ]]; then
 fi
 echo ""
 
+# ─── 7. Configs ──────────────────────────────────────────────────────────────
+
+echo "── Configs ─────────────────────────────────────────────"
+
+DATA_DIR="/data"
+CONFIGS_DIR="$DATA_DIR/configs"
+NKU_DIR="$DATA_DIR/pi_nku_configs"
+
+check_toml() {
+    local path="$1"
+    local label="$2"
+    local required_section="$3"   # опционально
+    local required_key="$4"       # опционально
+    CHECKED=$((CHECKED + 1))
+
+    if [[ ! -f "$path" ]]; then
+        fail "MISSING: $label → $path"; return
+    fi
+    if [[ ! -s "$path" ]]; then
+        fail "EMPTY: $label → $path"; return
+    fi
+    if [[ -n "${required_section:-}" ]] && ! grep -q "^\[${required_section}\]" "$path"; then
+        fail "MISSING SECTION [$required_section]: $label → $path"; return
+    fi
+    if [[ -n "${required_key:-}" ]] && ! grep -q "^${required_key}" "$path"; then
+        fail "MISSING KEY '${required_key}': $label → $path"; return
+    fi
+    ok "$label"
+}
+
+# nku_scheme.toml — критичный: indicator и утилиты читают его
+check_toml "$NKU_DIR/nku_scheme.toml"  "nku_scheme.toml"  "soundvolume"   "current"
+check_toml "$NKU_DIR/nku_scheme.toml"  "  → [musicvolume]"  "musicvolume" "current"
+check_toml "$NKU_DIR/nku_scheme.toml"  "  → [loadcapacity]" "loadcapacity" "current"
+
+# pi_scheme.toml — UART параметры
+check_toml "$NKU_DIR/pi_scheme.toml"   "pi_scheme.toml"   "device"        "current"
+check_toml "$NKU_DIR/pi_scheme.toml"   "  → [baudrate]"   "baudrate"      "current"
+
+# menu_style.toml — нужен только rpi_menu, не критичен для indicator
+check_toml "$NKU_DIR/menu_style.toml"  "menu_style.toml"  "colors"        ""
+
+# video.toml
+check_toml "$CONFIGS_DIR/video.toml"   "video.toml"       "video"         "win_w"
+
+# renderer.toml
+check_toml "$CONFIGS_DIR/renderer.toml" "renderer.toml"   "renderer"      "resources_dir"
+check_toml "$CONFIGS_DIR/renderer.toml" "  → [slot.digit_left]"  "slot.digit_left"  "x"
+
+echo ""
+
+# ─── 8. /data writable check ─────────────────────────────────────────────────
+
+echo "── Filesystem ──────────────────────────────────────────"
+CHECKED=$((CHECKED + 1))
+if touch "$DATA_DIR/.write_test" 2>/dev/null && rm "$DATA_DIR/.write_test"; then
+    ok "/data is writable"
+else
+    fail "/data is NOT writable"
+fi
+
+CHECKED=$((CHECKED + 1))
+if touch "/home/pi/indicator/resources/.write_test" 2>/dev/null && \
+   rm "/home/pi/indicator/resources/.write_test"; then
+    ok "bind mount /data/resources → indicator/resources: writable"
+else
+    fail "bind mount resources: NOT writable or not mounted"
+fi
+echo ""
+
+
 # ─── Итог ────────────────────────────────────────────────────────────────────
 
 echo "═══════════════════════════════════════════════════════"
