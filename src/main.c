@@ -40,14 +40,13 @@
 
 /* ─── Константы ─────────────────────────────────────────────────────────── */
 
-static const char *const DEFAULT_CONFIG_PATH = "/home/pi/indicator/configs/device/nku_scheme.toml";
-
-static const char *const UART_DEVICE = "/dev/ttyAMA0";
+static const char *const DEFAULT_CONFIG_PATH = "/data/pi_nku_configs/nku_scheme.toml";
 
 static const char *const VIDEO_CONFIG_FILENAME    = "video.toml";
 static const char *const RENDERER_CONFIG_FILENAME = "renderer.toml";
+static const char *const UART_CONFIG_FILENAME     = "pi_scheme.toml";
 
-static const char *const VIDEO_PATH = "/home/pi/indicator/videos/output.mp4";
+static const char *const VIDEO_PATH = "/data/videos/output.mp4";
 
 static const int WATCHDOG_INTERVAL_S = 30;
 
@@ -62,12 +61,22 @@ typedef enum fd_index_e
     FD_COUNT = 3,
 } fd_index_t;
 
+typedef enum setup_status_e
+{
+    SETUP_STATUS_UNKNOWN     = 0, /* файл не найден или не распознан */
+    SETUP_STATUS_OK          = 1, /* pull + push успешны             */
+    SETUP_STATUS_PENDING     = 2, /* setup ещё не завершён           */
+    SETUP_STATUS_PULL_FAILED = 3, /* pull провалился                 */
+    SETUP_STATUS_PUSH_FAILED = 4, /* push провалился — MCU не стримит */
+} setup_status_t;
+
 /* ─── Контекст приложения ────────────────────────────────────────────────── */
 
 typedef struct app_s
 {
     config_t cfg;
     indicator_state_t state;
+    setup_status_t setup_status;
     uart_t *uart;
     video_player_t *video;
     renderer_t *renderer;
@@ -87,6 +96,8 @@ typedef struct stats_s
 } stats_t;
 
 static stats_t g_s_stats;
+
+static const char *const SETUP_STATUS_PATH = "/data/setup_status";
 
 /* ─── Утилиты путей ──────────────────────────────────────────────────────── */
 
@@ -263,6 +274,60 @@ static void renderer_apply_elevator(app_t *p_app, const state_update_result_t *p
     }
 }
 
+/* ─── Setup status ───────────────────────────────────────────────────────── */
+
+static setup_status_t read_setup_status(const char *p_path)
+{
+    FILE *file_desc = fopen(p_path, "r");
+    if (file_desc == NULL)
+    {
+        return SETUP_STATUS_UNKNOWN;
+    }
+
+    char buf[32];
+    if (fgets(buf, sizeof(buf), file_desc) == NULL)
+    {
+        fclose(file_desc);
+        return SETUP_STATUS_UNKNOWN;
+    }
+    fclose(file_desc);
+
+    buf[strcspn(buf, "\r\n")] = '\0'; /* trim newline */
+
+    if (strcmp(buf, "ok") == 0)
+    {
+        return SETUP_STATUS_OK;
+    }
+    if (strcmp(buf, "pending") == 0)
+    {
+        return SETUP_STATUS_PENDING;
+    }
+    if (strcmp(buf, "pull_failed") == 0)
+    {
+        return SETUP_STATUS_PULL_FAILED;
+    }
+    if (strcmp(buf, "push_failed") == 0)
+    {
+        return SETUP_STATUS_PUSH_FAILED;
+    }
+
+    return SETUP_STATUS_UNKNOWN;
+}
+
+/**
+ * Вызывается при первом валидном фрейме любого opcode.
+ * Скрывает уведомление об отсутствии связи с MCU.
+ * Идемпотентна: после первого срабатывания ничего не делает.
+ */
+static void maybe_clear_mcu_notification(app_t *p_app)
+{
+    if (p_app->setup_status == SETUP_STATUS_OK)
+        return;
+
+    p_app->setup_status = SETUP_STATUS_OK;
+    syslog(LOG_NOTICE, "setup: MCU communication established — clearing notification");
+    /* Фаза 7: renderer_hide(p_app->renderer, SPRITE_NOTIFICATION); */
+}
 /* ─── UART коллбэк ───────────────────────────────────────────────────────── */
 
 static void on_uart_frame(const mu_frame_t *p_frame, void *p_ctx)
@@ -281,6 +346,7 @@ static void on_uart_frame(const mu_frame_t *p_frame, void *p_ctx)
             return;
         }
 
+        maybe_clear_mcu_notification(p_app);
         state_update_result_t upd = state_apply_dispatch(&p_app->state, dispatch);
         if (upd.dispatch_changed)
         {
@@ -310,6 +376,8 @@ static void on_uart_frame(const mu_frame_t *p_frame, void *p_ctx)
         }
 
         g_s_stats.frames_ok++;
+
+        maybe_clear_mcu_notification(p_app);
 
         floor_t floor             = floor_decode(payload.left_char, payload.right_char);
         state_update_result_t upd = state_apply_frame(&p_app->state, &payload);
@@ -432,15 +500,20 @@ static void on_watchdog_tick(const app_t *p_app)
 
 /* ─── Инициализация UART ─────────────────────────────────────────────────── */
 
-static uart_t *open_uart(app_t *p_app)
+static uart_t *open_uart(app_t *p_app, const uart_config_t *p_uart_cfg)
 {
-    uart_t *p_u = uart_open(UART_DEVICE, BAUD_115200, UART_PARITY_NONE, on_uart_frame, p_app);
+    /* baud_rate_t enum values == числа baudrate — прямой каст безопасен.
+     * Неизвестные значения отфильтрованы в uart_config_load(). */
+    baud_rate_t baud = (baud_rate_t) p_uart_cfg->baudrate;
+
+    uart_t *p_u = uart_open(p_uart_cfg->port, baud, UART_PARITY_NONE, on_uart_frame, p_app);
     if (p_u == NULL)
     {
-        syslog(LOG_ERR, "uart_open(%s, 115200): %s", UART_DEVICE, strerror(errno));
+        syslog(LOG_ERR, "uart_open(%s, %d): %s", p_uart_cfg->port, p_uart_cfg->baudrate,
+               strerror(errno));
         return NULL;
     }
-    syslog(LOG_NOTICE, "UART open: %s @ 115200 baud, 8N1", UART_DEVICE);
+    syslog(LOG_NOTICE, "UART open: %s @ %d baud, 8N1", p_uart_cfg->port, p_uart_cfg->baudrate);
     return p_u;
 }
 
@@ -449,7 +522,7 @@ static uart_t *open_uart(app_t *p_app)
 int main(int argc, char *p_argv[])
 {
     openlog("indicator", LOG_PID | LOG_CONS, LOG_DAEMON);
-    syslog(LOG_NOTICE, "indicator starting (phase-4)");
+    syslog(LOG_NOTICE, "indicator starting (phase-deploy)");
 
     const char *p_config_path = parse_config_path(argc, p_argv);
 
@@ -506,6 +579,21 @@ int main(int argc, char *p_argv[])
                app.cfg.rdr.resources_dir, app.cfg.rdr.digit_left_x, app.cfg.rdr.digit_left_y,
                app.cfg.rdr.digit_right_x, app.cfg.rdr.digit_right_y, app.cfg.rdr.arrow_x,
                app.cfg.rdr.arrow_y, app.cfg.rdr.weight_x, app.cfg.rdr.weight_y);
+    }
+
+    /* ── pi_scheme.toml (UART port + baudrate) ───────────────────────────── */
+
+    uart_config_t uart_cfg;
+    char uart_cfg_path[256];
+    derive_sibling_path(p_config_path, UART_CONFIG_FILENAME, uart_cfg_path, sizeof(uart_cfg_path));
+    if (uart_config_load(uart_cfg_path, &uart_cfg) < 0)
+    {
+        syslog(LOG_WARNING, "uart config: '%s' not found, using defaults port=%s baud=%d",
+               uart_cfg_path, uart_cfg.port, uart_cfg.baudrate);
+    }
+    else
+    {
+        syslog(LOG_INFO, "uart config: port=%s baud=%d", uart_cfg.port, uart_cfg.baudrate);
     }
 
     /* ── signalfd ─────────────────────────────────────────────────────────── */
@@ -571,12 +659,38 @@ int main(int argc, char *p_argv[])
         }
     }
 
+    /* ── Setup status (результат синхронизации с MCU при старте) ─────────── */
+
+    app.setup_status = read_setup_status(SETUP_STATUS_PATH);
+    switch (app.setup_status)
+    {
+    case SETUP_STATUS_OK:
+        syslog(LOG_INFO, "setup: status=ok");
+        break;
+    case SETUP_STATUS_PUSH_FAILED:
+        syslog(LOG_WARNING, "setup: push_failed — MCU не получил команду стриминга");
+        /* Фаза 7: renderer_show_png(app.renderer, SPRITE_NOTIFICATION,
+         *         "/data/resources/notifications/no_mcu.png"); */
+        break;
+    case SETUP_STATUS_PULL_FAILED:
+        syslog(LOG_WARNING, "setup: pull_failed — не удалось прочитать параметры MCU");
+        /* Фаза 7: renderer_show_png(app.renderer, SPRITE_NOTIFICATION,
+         *         "/data/resources/notifications/no_mcu.png"); */
+        break;
+    case SETUP_STATUS_PENDING:
+        syslog(LOG_WARNING, "setup: pending — setup ещё не завершился");
+        break;
+    default:
+        syslog(LOG_WARNING, "setup: status=unknown (файл не найден или не распознан)");
+        break;
+    }
+
     /* ── Audio (Фаза 5) ───────────────────────────────────────────────────── */
     /* TODO: app.audio = audio_player_open(&app.cfg); */
 
     /* ── UART (последним: только после готовности всех потребителей) ──────── */
 
-    app.uart = open_uart(&app);
+    app.uart = open_uart(&app, &uart_cfg);
     if (app.uart == NULL)
     {
         renderer_destroy(app.renderer);

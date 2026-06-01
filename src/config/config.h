@@ -9,6 +9,14 @@
  */
 #pragma once
 
+#define UART_PORT_MAX 64
+
+typedef struct uart_config_s
+{
+    char port[UART_PORT_MAX];
+    int baudrate;
+} uart_config_t;
+
 #include "renderer/renderer.h" /* renderer_config_t */
 
 /* ─── Дефолты — используются в config_load при отсутствии файла ──────────── */
@@ -22,6 +30,8 @@
 #define CONFIG_DEFAULT_VIDEO_WIN_W 600
 #define CONFIG_DEFAULT_VIDEO_WIN_H 1024
 
+#define CONFIG_DEFAULT_UART_PORT "/dev/ttyAMA0"
+#define CONFIG_DEFAULT_UART_BAUD 115200
 /* ─── Единая структура конфигурации ───────────────────────────────────────── */
 
 typedef struct config_s
@@ -47,13 +57,13 @@ typedef struct config_s
  * config_load — загрузить nku_scheme.toml.
  * При отсутствии файла — дефолты, возврат -1.
  */
-int config_load(const char *path, config_t *cfg);
+int config_load(const char *p_path, config_t *p_cfg);
 
 /**
  * video_config_load — загрузить video.toml.
  * Заполняет только поля video_win_* в cfg.
  */
-int video_config_load(const char *path, config_t *cfg);
+int video_config_load(const char *p_path, config_t *p_cfg);
 
 /**
  * renderer_config_load — загрузить renderer.toml.
@@ -61,4 +71,6 @@ int video_config_load(const char *path, config_t *cfg);
  * Дефолты: позиции из indicator.h, resources_dir=/home/pi/indicator/resources.
  * @return 0 при успехе, -1 при ошибке / отсутствии файла.
  */
-int renderer_config_load(const char *path, renderer_config_t *cfg);
+int renderer_config_load(const char *p_path, renderer_config_t *p_cfg);
+
+int uart_config_load(const char *p_path, uart_config_t *p_cfg);

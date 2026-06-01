@@ -1,7 +1,7 @@
 /**
  * tests/test_config.c
  *
- * Unit-тесты для config_load() и video_config_load().
+ * Unit-тесты для config_load(), video_config_load() и uart_config_load().
  * Тест-данные пишутся во временные файлы в /tmp/.
  */
 
@@ -13,6 +13,7 @@
 
 #define TEST_TOML_PATH       "/tmp/test_indicator_config.toml"
 #define TEST_VIDEO_TOML_PATH "/tmp/test_indicator_video.toml"
+#define TEST_UART_TOML_PATH  "/tmp/test_indicator_uart.toml"
 
 void setUp(void)
 {
@@ -22,6 +23,7 @@ void tearDown(void)
 {
     remove(TEST_TOML_PATH);
     remove(TEST_VIDEO_TOML_PATH);
+    remove(TEST_UART_TOML_PATH);
 }
 
 /* ── Записать тестовый TOML в файл ───────────────────────────────────────── */
@@ -39,6 +41,16 @@ static int write_toml(const char *content)
 static int write_video_toml(const char *content)
 {
     FILE *f = fopen(TEST_VIDEO_TOML_PATH, "w");
+    if (!f)
+        return -1;
+    fputs(content, f);
+    fclose(f);
+    return 0;
+}
+
+static int write_uart_toml(const char *content)
+{
+    FILE *f = fopen(TEST_UART_TOML_PATH, "w");
     if (!f)
         return -1;
     fputs(content, f);
@@ -348,7 +360,7 @@ static void test_video_config_load_partial(void)
 
 static void test_video_config_load_with_comments(void)
 {
-    const char *toml = "# Настройки окна voспроизведения\n"
+    const char *toml = "# Настройки окна воспроизведения\n"
                        "\n"
                        "[video]\n"
                        "win_x = 0 # левый край\n"
@@ -370,6 +382,161 @@ static void test_video_config_load_with_comments(void)
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
+ * uart_config_load — валидный файл: current перекрывает дефолты
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+static void test_uart_config_valid(void)
+{
+    const char *toml = "[device]\n"
+                       "name = \"Имя порта\"\n"
+                       "possible_values = [\"/dev/serial0\"]\n"
+                       "default = \"/dev/ttyAMA0\"\n"
+                       "current = \"/dev/serial0\"\n"
+                       "\n"
+                       "[baudrate]\n"
+                       "name = \"Скорость\"\n"
+                       "possible_values = [\"9600\", \"38400\", \"115200\"]\n"
+                       "default = \"115200\"\n"
+                       "current = \"38400\"\n";
+
+    TEST_ASSERT_EQUAL(0, write_uart_toml(toml));
+
+    uart_config_t cfg;
+    int rc = uart_config_load(TEST_UART_TOML_PATH, &cfg);
+
+    TEST_ASSERT_EQUAL(0, rc);
+    TEST_ASSERT_EQUAL_STRING("/dev/serial0", cfg.port);
+    TEST_ASSERT_EQUAL(38400, cfg.baudrate);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * uart_config_load — current отсутствует → используется default
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+static void test_uart_config_fallback_to_default(void)
+{
+    const char *toml = "[device]\n"
+                       "default = \"/dev/ttyS0\"\n"
+                       "\n"
+                       "[baudrate]\n"
+                       "default = \"9600\"\n";
+
+    write_uart_toml(toml);
+
+    uart_config_t cfg;
+    int rc = uart_config_load(TEST_UART_TOML_PATH, &cfg);
+
+    TEST_ASSERT_EQUAL(0, rc);
+    TEST_ASSERT_EQUAL_STRING("/dev/ttyS0", cfg.port);
+    TEST_ASSERT_EQUAL(9600, cfg.baudrate);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * uart_config_load — файл не найден → hardcoded дефолты, возврат -1
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+static void test_uart_config_missing_file(void)
+{
+    uart_config_t cfg;
+    int rc = uart_config_load("/tmp/DOES_NOT_EXIST_pi_scheme.toml", &cfg);
+
+    TEST_ASSERT_EQUAL(-1, rc);
+    TEST_ASSERT_EQUAL_STRING(CONFIG_DEFAULT_UART_PORT, cfg.port);
+    TEST_ASSERT_EQUAL(CONFIG_DEFAULT_UART_BAUD, cfg.baudrate);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * uart_config_load — NULL путь → дефолты, возврат -1
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+static void test_uart_config_null_path(void)
+{
+    uart_config_t cfg;
+    int rc = uart_config_load(NULL, &cfg);
+
+    TEST_ASSERT_EQUAL(-1, rc);
+    TEST_ASSERT_EQUAL_STRING(CONFIG_DEFAULT_UART_PORT, cfg.port);
+    TEST_ASSERT_EQUAL(CONFIG_DEFAULT_UART_BAUD, cfg.baudrate);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * uart_config_load — только [device], [baudrate] отсутствует → baudrate дефолт
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+static void test_uart_config_partial_only_device(void)
+{
+    const char *toml = "[device]\n"
+                       "current = \"/dev/ttyUSB0\"\n";
+
+    write_uart_toml(toml);
+
+    uart_config_t cfg;
+    int rc = uart_config_load(TEST_UART_TOML_PATH, &cfg);
+
+    TEST_ASSERT_EQUAL(0, rc);
+    TEST_ASSERT_EQUAL_STRING("/dev/ttyUSB0", cfg.port);
+    TEST_ASSERT_EQUAL(CONFIG_DEFAULT_UART_BAUD, cfg.baudrate); /* дефолт */
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * uart_config_load — неизвестный baudrate → остаётся дефолт 115200
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+static void test_uart_config_unknown_baudrate(void)
+{
+    const char *toml = "[device]\n"
+                       "current = \"/dev/ttyAMA0\"\n"
+                       "\n"
+                       "[baudrate]\n"
+                       "current = \"999999\"\n";
+
+    write_uart_toml(toml);
+
+    uart_config_t cfg;
+    int rc = uart_config_load(TEST_UART_TOML_PATH, &cfg);
+
+    TEST_ASSERT_EQUAL(0, rc);
+    TEST_ASSERT_EQUAL(CONFIG_DEFAULT_UART_BAUD, cfg.baudrate);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * uart_config_load — симуляция реального pi_scheme.toml
+ * (с possible_values-массивом — должен быть проигнорирован)
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+static void test_uart_config_realistic_toml(void)
+{
+    const char *toml = "# Конфигурация последовательного порта\n"
+                       "\n"
+                       "[device]\n"
+                       "name = \"Имя порта\"\n"
+                       "possible_values = [\n"
+                       "\"/dev/serial0\"\n"
+                       "]\n"
+                       "default = \"/dev/serial0\"\n"
+                       "current = \"/dev/serial0\"\n"
+                       "\n"
+                       "[baudrate]\n"
+                       "name = \"Скорость передачи данных\"\n"
+                       "possible_values = [\n"
+                       "\"9600\",\n"
+                       "\"38400\",\n"
+                       "\"115200\"\n"
+                       "]\n"
+                       "default = \"115200\"\n"
+                       "current = \"115200\"\n";
+
+    write_uart_toml(toml);
+
+    uart_config_t cfg;
+    int rc = uart_config_load(TEST_UART_TOML_PATH, &cfg);
+
+    TEST_ASSERT_EQUAL(0, rc);
+    TEST_ASSERT_EQUAL_STRING("/dev/serial0", cfg.port);
+    TEST_ASSERT_EQUAL(115200, cfg.baudrate);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
  * main
  * ──────────────────────────────────────────────────────────────────────────── */
 
@@ -377,7 +544,7 @@ int main(void)
 {
     UNITY_BEGIN();
 
-    /* config_load — существующие тесты */
+    /* config_load */
     RUN_TEST(test_config_basic);
     RUN_TEST(test_config_sound_0_percent);
     RUN_TEST(test_config_sound_100_percent);
@@ -388,12 +555,21 @@ int main(void)
     RUN_TEST(test_config_load_idx_current_not_in_array);
     RUN_TEST(test_config_realistic_toml);
 
-    /* video_config_load — новые тесты */
+    /* video_config_load */
     RUN_TEST(test_video_config_load_full);
     RUN_TEST(test_video_config_load_missing_file);
     RUN_TEST(test_video_config_load_null_path);
     RUN_TEST(test_video_config_load_partial);
     RUN_TEST(test_video_config_load_with_comments);
+
+    /* uart_config_load */
+    RUN_TEST(test_uart_config_valid);
+    RUN_TEST(test_uart_config_fallback_to_default);
+    RUN_TEST(test_uart_config_missing_file);
+    RUN_TEST(test_uart_config_null_path);
+    RUN_TEST(test_uart_config_partial_only_device);
+    RUN_TEST(test_uart_config_unknown_baudrate);
+    RUN_TEST(test_uart_config_realistic_toml);
 
     return UNITY_END();
 }

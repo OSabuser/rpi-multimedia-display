@@ -202,12 +202,29 @@ if [[ $SOUND_WARNINGS -gt 0 ]]; then
 fi
 echo ""
 
+# ─── 6.5 Rust утилиты ────────────────────────────────────────────────────────
+
+echo "── Rust utilities ──────────────────────────────────────"
+IND_DIR="/home/pi/indicator"
+
+for TOOL in pi_nku_sync pi_nku_menu; do
+    CHECKED=$((CHECKED + 1))
+    path="$IND_DIR/$TOOL"
+    if [[ ! -f "$path" ]]; then
+        fail "MISSING: $TOOL → $path"
+    elif [[ ! -x "$path" ]]; then
+        fail "NOT EXECUTABLE: $TOOL → $path"
+    else
+        ok "$TOOL"
+    fi
+done
+echo ""
+
 # ─── 7. Configs ──────────────────────────────────────────────────────────────
 
 echo "── Configs ─────────────────────────────────────────────"
 
 DATA_DIR="/data"
-CONFIGS_DIR="$DATA_DIR/configs"
 NKU_DIR="$DATA_DIR/pi_nku_configs"
 
 check_toml() {
@@ -245,31 +262,51 @@ check_toml "$NKU_DIR/pi_scheme.toml"   "  → [baudrate]"   "baudrate"      "cur
 check_toml "$NKU_DIR/menu_style.toml"  "menu_style.toml"  "colors"        ""
 
 # video.toml
-check_toml "$CONFIGS_DIR/video.toml"   "video.toml"       "video"         "win_w"
+check_toml "$NKU_DIR/video.toml"   "video.toml"       "video"         "win_w"
 
 # renderer.toml
-check_toml "$CONFIGS_DIR/renderer.toml" "renderer.toml"   "renderer"      "resources_dir"
-check_toml "$CONFIGS_DIR/renderer.toml" "  → [slot.digit_left]"  "slot.digit_left"  "x"
+check_toml "$NKU_DIR/renderer.toml" "renderer.toml"   "renderer"      "resources_dir"
+check_toml "$NKU_DIR/renderer.toml" "  → [slot.digit_left]"  "slot.digit_left"  "x"
 
 echo ""
 
-# ─── 8. /data writable check ─────────────────────────────────────────────────
+# ─── 8. Filesystem ───────────────────────────────────────────────────────────
 
 echo "── Filesystem ──────────────────────────────────────────"
-CHECKED=$((CHECKED + 1))
-if touch "$DATA_DIR/.write_test" 2>/dev/null && rm "$DATA_DIR/.write_test"; then
-    ok "/data is writable"
-else
-    fail "/data is NOT writable"
-fi
 
-CHECKED=$((CHECKED + 1))
-if touch "/home/pi/indicator/resources/.write_test" 2>/dev/null && \
-   rm "/home/pi/indicator/resources/.write_test"; then
-    ok "bind mount /data/resources → indicator/resources: writable"
-else
-    fail "bind mount resources: NOT writable or not mounted"
-fi
+IND="/home/pi/indicator"
+
+check_writable() {
+    local path="$1" label="$2"
+    CHECKED=$((CHECKED + 1))
+    if touch "${path}/.write_test" 2>/dev/null && rm "${path}/.write_test"; then
+        ok "${label}: writable"
+    else
+        fail "${label}: NOT writable or not mounted"
+    fi
+}
+
+check_bind_mount() {
+    local path="$1"
+    CHECKED=$((CHECKED + 1))
+    if mountpoint -q "${path}" 2>/dev/null; then
+        ok "bind mount active: ${path}"
+    else
+        fail "bind mount NOT active: ${path}"
+    fi
+}
+
+check_writable "/data"                 "/data"
+check_writable "/data/pi_nku_configs"  "/data/pi_nku_configs"
+check_writable "/data/resources"       "/data/resources"
+check_writable "/data/sounds"          "/data/sounds"
+check_writable "/data/videos"          "/data/videos"
+
+check_bind_mount "${IND}/pi_nku_configs"
+check_bind_mount "${IND}/resources"
+check_bind_mount "${IND}/sounds"
+check_bind_mount "${IND}/videos"
+
 echo ""
 
 

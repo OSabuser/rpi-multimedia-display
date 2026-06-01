@@ -11,7 +11,7 @@ User=pi
 WorkingDirectory=/home/pi/indicator
 
 ExecStart=/home/pi/indicator/indicator \
-    --config=/home/pi/indicator/configs/device/nku_scheme.toml
+    --config=/data/pi_nku_configs/nku_scheme.toml
 
 # Перезапускать всегда: и при краше, и при ненулевом exit-коде
 Restart=always

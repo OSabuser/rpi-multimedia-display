@@ -12,7 +12,7 @@
 #   Z=5  NOTIFICATION (Фаза 7)
 
 [renderer]
-resources_dir = /home/pi/indicator/resources
+resources_dir = /data/resources
 
 [slot.digit_left]
 x = 15

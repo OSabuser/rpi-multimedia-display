@@ -25,6 +25,9 @@ systemctl is-active --quiet media-ingest.service && ok "media-ingest.service act
 echo "  Бинари..."
 [ -f /home/pi/indicator/indicator    ] && ok "indicator binary"    || fail "indicator binary missing"
 [ -f /home/pi/indicator/media_ingest ] && ok "media_ingest binary" || fail "media_ingest binary missing"
+echo "  Rust утилиты..."
+[ -f /home/pi/indicator/pi_nku_sync ] && ok "pi_nku_sync" || fail "pi_nku_sync missing"
+[ -f /home/pi/indicator/pi_nku_menu ] && ok "pi_nku_menu" || fail "pi_nku_menu missing"
 
 # ─── 3. Конфиги (/data/pi_nku_configs) ───────────────────────────────────────
 echo "  Конфиги..."

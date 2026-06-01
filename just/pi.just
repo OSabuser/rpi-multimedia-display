@@ -226,6 +226,14 @@ deploy:
         "{{BUILD_DIR}}/pi/media_ingest" \
         "{{_pi}}:{{PI_DIR}}/"
 
+    # Rust утилиты (pi_nku_sync, pi_nku_menu)
+    if [ -f "deploy/bin/pi_nku_sync" ]; then
+        just pi::deploy-rust
+    else
+        echo "  ⚠️   deploy/bin/pi_nku_sync not found — skipping Rust tools"
+        echo "       Run: just pi::deploy-rust after placing binaries in deploy/bin/"
+    fi
+
     # Диагностические утилиты
     just pi::deploy-tools
 
@@ -302,6 +310,22 @@ deploy-sounds:
     echo "  📤  Syncing sounds to {{_pi}}:/data/sounds/..."
     rsync -avz --progress deploy/sounds/ "{{_pi}}:/data/sounds/"
     echo "  ✅  Sounds deployed"
+[doc('Задеплоить Rust-утилиты (pi_nku_sync, pi_nku_menu) → PI_DIR/')]
+[group('deploy')]
+deploy-rust:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ ! -f "deploy/bin/pi_nku_sync" ] || [ ! -f "deploy/bin/pi_nku_menu" ]; then
+        echo "  ❌  Rust binaries not found in deploy/bin/"
+        echo "     Build from third_party/config_toolset/ and copy to deploy/bin/"
+        exit 1
+    fi
+    echo "  📤  Deploying Rust tools to {{_pi}}:{{PI_DIR}}/..."
+    rsync -avz --progress \
+        deploy/bin/pi_nku_sync \
+        deploy/bin/pi_nku_menu \
+        "{{_pi}}:{{PI_DIR}}/"
+    echo "  ✅  Rust tools deployed"
 
 [doc('Проверить ресурсы, конфиги и bind-монты на Pi')]
 [group('deploy')]
