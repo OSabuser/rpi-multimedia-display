@@ -1,6 +1,6 @@
 # tools/CMakeLists.txt
 # Диагностические утилиты — собираются только на Pi (нужен реальный UART).
-# Не входят в indicator.service, только для отладки в поле.
+
 
 if(INDICATOR_PLATFORM_DISPMANX)
 

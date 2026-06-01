@@ -205,6 +205,14 @@ setup-gdbserver:
     ssh "{{_pi}}" "sudo apt-get install -y gdbserver && gdbserver --version"
     @echo "  ✅  gdbserver installed on Pi"
 
+enable-services:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ssh "{{_pi}}" "sudo systemctl enable \
+        indicator.service \
+        indicator-setup.service \
+        indicator-firstboot.service"
+    echo "  ✅  Services enabled"
 # =============================================================================
 # ГРУППА: deploy — деплой на Pi
 # =============================================================================
@@ -242,7 +250,10 @@ deploy:
     rsync -avz --progress \
         scripts/smoke_test.sh \
         scripts/check_resources.sh \
+        scripts/run_setup.sh \
+        scripts/first_boot.sh \
         "{{_pi}}:{{PI_DIR}}/scripts/"
+    ssh "{{_pi}}" "chmod +x {{PI_DIR}}/scripts/*.sh"
 
     # systemd units (все файлы из deploy/systemd/)
     rsync -avz --progress deploy/systemd/ "{{_pi}}:/tmp/indicator-systemd/"

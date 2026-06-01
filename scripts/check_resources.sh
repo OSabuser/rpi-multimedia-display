@@ -5,7 +5,6 @@
 # Проверяет наличие, ненулевой размер и корректность PNG всех необходимых файлов.
 #
 # Использование:
-#   На Pi:   bash /home/pi/indicator/scripts/check_resources.sh [--dir /path/to/resources]
 #   С хоста: just pi::check-resources
 #
 # Выход:
@@ -16,7 +15,7 @@ set -euo pipefail
 
 # ─── Аргументы ───────────────────────────────────────────────────────────────
 
-RESOURCES_DIR="/home/pi/indicator/resources"
+RESOURCES_DIR="/data/resources"
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --dir) RESOURCES_DIR="$2"; shift 2 ;;
@@ -57,6 +56,34 @@ check_png() {
     sig=$(xxd -p -l 8 "$path" 2>/dev/null || hexdump -e '8/1 "%02x"' -n 8 "$path" 2>/dev/null || echo "")
     if [[ "$sig" != "89504e470d0a1a0a" ]]; then
         fail "INVALID PNG: $label → $path (sig: $sig)"
+        return
+    fi
+
+    ok "$label"
+}
+
+check_wav() {
+    local path="$1"
+    local label="$2"
+    CHECKED=$((CHECKED + 1))
+
+    if [[ ! -f "$path" ]]; then
+        fail "MISSING: $label → $path"
+        return
+    fi
+
+    local size
+    size=$(stat -c%s "$path" 2>/dev/null || stat -f%z "$path")
+    if [[ "$size" -eq 0 ]]; then
+        fail "EMPTY:   $label → $path"
+        return
+    fi
+
+    # Проверить WAV/RIFF сигнатуру (первые 4 байта: 52 49 46 46 = "RIFF")
+    local sig
+    sig=$(xxd -p -l 4 "$path" 2>/dev/null || hexdump -e '4/1 "%02x"' -n 4 "$path" 2>/dev/null || echo "")
+    if [[ "$sig" != "52494646" ]]; then
+        fail "INVALID WAV: $label → $path (sig: $sig)"
         return
     fi
 
@@ -169,37 +196,93 @@ for label in "${!MODE_FILES[@]}"; do
 done
 echo ""
 
-# ─── 6. Sounds (Phase 5 — предупреждение, не ошибка) ─────────────────────────
+# ─── 6. Sounds ───────────────────────────────────────────────────────────────
+#
+# Маппинг из src/domain/sound_map.c (Phase 5).
+# Структура:
+#   6a. Event sounds  (8 файлов) — прямой маппинг sound_t → WAV
+#   6b. Floor words   (3 файла)  — «этаж», «подвал», «минус»
+#   6c. Numbers       (1–20)     — числовые слова
+#   6d. Tens          (5 файлов) — составные десятки для этажей 21–49
+#   6e. Fallbacks     (2 файла)  — на случай неизвестного/>49 этажа
+#   6f. Music         (7 файлов) — фоновые треки mus1–mus7
 
-echo "── Sounds (Phase 5) ────────────────────────────────────"
-SOUND_FILES=(
-    "s_gong.wav:SOUND_DING(1)"
-    "s_up.wav:SOUND_UP(2)"
-    "s_down.wav:SOUND_DOWN(3)"
-    "s_close.wav:SOUND_CLOSING(4)"
-    "s_open.wav:SOUND_OPENING(5)"
-    "s_overload.wav:SOUND_OVERLOAD(6)"
-    "s_firealarm.wav:SOUND_FIRE_ALARM(7)"
-    "s_dont_work.wav:SOUND_DONT_WORK(8)"
-    "s_button.wav:SOUND_BUTTON(9)"
-)
+echo "── Sounds ──────────────────────────────────────────────"
 
 SOUNDS_DIR="$(dirname "$RESOURCES_DIR")/sounds"
-SOUND_WARNINGS=0
-for entry in "${SOUND_FILES[@]}"; do
-    file="${entry%%:*}"
-    label="${entry##*:}"
-    path="$SOUNDS_DIR/$file"
+
+if [[ ! -d "$SOUNDS_DIR" ]]; then
+    fail "SOUNDS DIR MISSING: $SOUNDS_DIR"
+    echo ""
+else
+
+# 6a. Event sounds
+echo "  ── 6a. Event sounds ──"
+check_wav "$SOUNDS_DIR/up.wav"       "SOUND_UP         → up.wav"
+check_wav "$SOUNDS_DIR/down.wav"     "SOUND_DOWN       → down.wav"
+check_wav "$SOUNDS_DIR/closing.wav"  "SOUND_CLOSING    → closing.wav"
+check_wav "$SOUNDS_DIR/opening.wav"  "SOUND_OPENING    → opening.wav"
+check_wav "$SOUNDS_DIR/overload.wav" "SOUND_OVERLOAD   → overload.wav"
+check_wav "$SOUNDS_DIR/fire.wav"     "SOUND_FIRE_ALARM → fire.wav"
+check_wav "$SOUNDS_DIR/g_double.wav" "SOUND_DONT_WORK  → g_double.wav"
+check_wav "$SOUNDS_DIR/button.wav"   "SOUND_BUTTON     → button.wav"
+
+# 6b. Floor announcement words
+echo "  ── 6b. Floor words ──"
+check_wav "$SOUNDS_DIR/floor.wav"  "floor.wav  (суффикс «этаж»)"
+check_wav "$SOUNDS_DIR/podval.wav" "podval.wav (суффикс «подвал»)"
+check_wav "$SOUNDS_DIR/minus.wav"  "minus.wav  (префикс «минус»)"
+
+# 6c. Number words 1–20
+echo "  ── 6c. Numbers 1–20 ──"
+MISSING_NUMS=""
+for i in $(seq 1 20); do
+    path="$SOUNDS_DIR/${i}.wav"
+    CHECKED=$((CHECKED + 1))
     if [[ ! -f "$path" ]]; then
-        echo "  ⚠️   MISSING (Phase 5): $label → $path"
-        SOUND_WARNINGS=$((SOUND_WARNINGS + 1))
-    else
-        ok "$label → sounds/$file"
+        fail "MISSING: ${i}.wav"
+        MISSING_NUMS="$MISSING_NUMS $i"
+    elif [[ $(stat -c%s "$path" 2>/dev/null || stat -f%z "$path") -eq 0 ]]; then
+        fail "EMPTY:   ${i}.wav"
+        MISSING_NUMS="$MISSING_NUMS $i"
     fi
 done
-if [[ $SOUND_WARNINGS -gt 0 ]]; then
-    info "$SOUND_WARNINGS sound file(s) missing — OK until Phase 5"
+if [[ -z "$MISSING_NUMS" ]]; then
+    ok "All 20 number WAVs present (1.wav–20.wav)"
 fi
+
+# 6d. Composite tens (для этажей 21–49)
+echo "  ── 6d. Tens composites (21–49) ──"
+check_wav "$SOUNDS_DIR/20-.wav" "20-.wav  (этажи 21–29)"
+check_wav "$SOUNDS_DIR/30.wav"  "30.wav   (этаж 30)"
+check_wav "$SOUNDS_DIR/30-.wav" "30-.wav  (этажи 31–39)"
+check_wav "$SOUNDS_DIR/40.wav"  "40.wav   (этаж 40)"
+check_wav "$SOUNDS_DIR/40-.wav" "40-.wav  (этажи 41–49)"
+
+# 6e. Fallbacks
+echo "  ── 6e. Fallbacks ──"
+check_wav "$SOUNDS_DIR/g_triple.wav" "g_triple.wav (fallback: этаж >49)"
+check_wav "$SOUNDS_DIR/g_single.wav" "g_single.wav (fallback: FLOOR_UNKNOWN)"
+
+# 6f. Music tracks
+echo "  ── 6f. Music (mus1–mus7) ──"
+MISSING_MUS=""
+for i in $(seq 1 7); do
+    path="$SOUNDS_DIR/mus${i}.wav"
+    CHECKED=$((CHECKED + 1))
+    if [[ ! -f "$path" ]]; then
+        fail "MISSING: mus${i}.wav"
+        MISSING_MUS="$MISSING_MUS $i"
+    elif [[ $(stat -c%s "$path" 2>/dev/null || stat -f%z "$path") -eq 0 ]]; then
+        fail "EMPTY:   mus${i}.wav"
+        MISSING_MUS="$MISSING_MUS $i"
+    fi
+done
+if [[ -z "$MISSING_MUS" ]]; then
+    ok "All 7 music tracks present (mus1.wav–mus7.wav)"
+fi
+
+fi  # end: SOUNDS_DIR exists
 echo ""
 
 # ─── 6.5 Rust утилиты ────────────────────────────────────────────────────────

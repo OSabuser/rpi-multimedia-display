@@ -17,8 +17,10 @@
  */
 #define _GNU_SOURCE
 
+#include "audio/audio.h"
 #include "config/config.h"
 #include "domain/floor.h"
+#include "domain/sound_map.h"
 #include "domain/state.h"
 #include "player/video_player.h"
 #include "protocol/parser.h"
@@ -45,8 +47,8 @@ static const char *const DEFAULT_CONFIG_PATH = "/data/pi_nku_configs/nku_scheme.
 static const char *const VIDEO_CONFIG_FILENAME    = "video.toml";
 static const char *const RENDERER_CONFIG_FILENAME = "renderer.toml";
 static const char *const UART_CONFIG_FILENAME     = "pi_scheme.toml";
-
-static const char *const VIDEO_PATH = "/data/videos/output.mp4";
+static const char *const SOUNDS_DIR               = "/data/sounds";
+static const char *const VIDEO_PATH               = "/data/videos/output.mp4";
 
 static const int WATCHDOG_INTERVAL_S = 30;
 
@@ -80,7 +82,7 @@ typedef struct app_s
     uart_t *uart;
     video_player_t *video;
     renderer_t *renderer;
-    /* audio_player_t *audio; — Фаза 5 */
+    audio_player_t *audio;
 } app_t;
 
 /* ─── Статистика ─────────────────────────────────────────────────────────── */
@@ -101,22 +103,49 @@ static const char *const SETUP_STATUS_PATH = "/data/setup_status";
 
 /* ─── Утилиты путей ──────────────────────────────────────────────────────── */
 
-static void derive_sibling_path(const char *base_path, const char *filename, char *out,
+static void derive_sibling_path(const char *p_base_path, const char *p_filename, char *p_out,
                                 size_t out_sz)
 {
-    const char *last_slash = strrchr(base_path, '/');
+    const char *last_slash = strrchr(p_base_path, '/');
     if (last_slash == NULL)
     {
-        strncpy(out, filename, out_sz - 1u);
-        out[out_sz - 1u] = '\0';
+        strncpy(p_out, p_filename, out_sz - 1U);
+        p_out[out_sz - 1U] = '\0';
         return;
     }
-    size_t dir_len = (size_t) (last_slash - base_path) + 1u;
+    size_t dir_len = (size_t) (last_slash - p_base_path) + 1U;
     if (dir_len >= out_sz)
-        dir_len = out_sz - 1u;
-    strncpy(out, base_path, dir_len);
-    out[dir_len] = '\0';
-    strncat(out, filename, out_sz - dir_len - 1u);
+    {
+        dir_len = out_sz - 1U;
+    }
+    strncpy(p_out, p_base_path, dir_len);
+    p_out[dir_len] = '\0';
+    strncat(p_out, p_filename, out_sz - dir_len - 1U);
+}
+
+/**
+ * sound_to_prio — маппинг звукового события → приоритет воспроизведения.
+ *
+ * CRITICAL : SOUND_OVERLOAD, SOUND_FIRE_ALARM, SOUND_DONT_WORK
+ *            вытесняют всё, сбрасывают музыку.
+ * FLOOR    : SOUND_DING
+ *            вытесняет движение и музыку, сбрасывает музыку.
+ * MOVEMENT : SOUND_UP, SOUND_DOWN, SOUND_CLOSING, SOUND_OPENING, SOUND_BUTTON
+ *            не сбрасывают music_wanted → музыка может возобновиться после BUTTON.
+ */
+static audio_prio_t sound_to_prio(sound_t sound) /* PHASE 5 */
+{
+    switch (sound)
+    {
+    case SOUND_OVERLOAD:
+    case SOUND_FIRE_ALARM:
+    case SOUND_DONT_WORK:
+        return AUDIO_PRIO_CRITICAL;
+    case SOUND_DING:
+        return AUDIO_PRIO_FLOOR;
+    default: /* UP, DOWN, CLOSING, OPENING, BUTTON */
+        return AUDIO_PRIO_MOVEMENT;
+    }
 }
 
 /* ─── Парсинг аргументов ─────────────────────────────────────────────────── */
@@ -129,7 +158,9 @@ static const char *parse_config_path(int argc, char *p_argv[])
     for (int i = 1; i < argc; i++)
     {
         if (strncmp(p_argv[i], PREFIX, (size_t) PREFIX_LEN) == 0)
+        {
             return &p_argv[i][PREFIX_LEN];
+        }
     }
     return DEFAULT_CONFIG_PATH;
 }
@@ -322,7 +353,9 @@ static setup_status_t read_setup_status(const char *p_path)
 static void maybe_clear_mcu_notification(app_t *p_app)
 {
     if (p_app->setup_status == SETUP_STATUS_OK)
+    {
         return;
+    }
 
     p_app->setup_status = SETUP_STATUS_OK;
     syslog(LOG_NOTICE, "setup: MCU communication established — clearing notification");
@@ -358,6 +391,11 @@ static void on_uart_frame(const mu_frame_t *p_frame, void *p_ctx)
             if (p_app->renderer != NULL)
             {
                 renderer_apply_dispatch(p_app, dispatch);
+            }
+
+            if (p_app->audio != NULL && p_app->state.active_dispatch != DISPATCH_OFF)
+            {
+                audio_player_cancel_music(p_app->audio);
             }
         }
         return;
@@ -395,10 +433,31 @@ static void on_uart_frame(const mu_frame_t *p_frame, void *p_ctx)
         g_s_stats.last_mode      = (int) payload.mode;
 
         if (p_app->renderer != NULL)
+        {
             renderer_apply_elevator(p_app, &upd, &payload);
+        }
 
-        /* Фаза 5: if (upd.sound_triggered)
-         *             audio_play(p_app->audio, payload.sound, floor, &p_app->cfg); */
+        /* ── Аудио (Фаза 5) ────────────────────────────────────────────── */
+        if (p_app->audio != NULL)
+        {
+            /* Воспроизвести звуковое событие */
+            if (upd.sound_triggered)
+            {
+                audio_sequence_t seq;
+                sound_map_resolve(payload.sound, floor, &seq);
+                if (seq.valid)
+                {
+                    audio_prio_t prio = sound_to_prio(payload.sound);
+                    audio_player_play(p_app->audio, &seq, prio);
+                }
+            }
+
+            /* Отменить музыку при нештатном режиме (mode != NORMAL) */
+            if ((upd.mode_changed || upd.first_frame) && payload.mode != MODE_NORMAL)
+            {
+                audio_player_cancel_music(p_app->audio);
+            }
+        }
         return;
     }
 
@@ -686,7 +745,18 @@ int main(int argc, char *p_argv[])
     }
 
     /* ── Audio (Фаза 5) ───────────────────────────────────────────────────── */
-    /* TODO: app.audio = audio_player_open(&app.cfg); */
+    app.audio =
+        audio_player_open(SOUNDS_DIR, app.cfg.sound_volume_percent, app.cfg.music_volume_percent);
+    if (app.audio == NULL)
+    {
+        /* Аудио не критично для работы: продолжаем без звука */
+        syslog(LOG_ERR, "audio_player_open failed — audio disabled");
+    }
+    else
+    {
+        syslog(LOG_INFO, "audio: player ready, sound=%d%% music=%d%%", app.cfg.sound_volume_percent,
+               app.cfg.music_volume_percent);
+    }
 
     /* ── UART (последним: только после готовности всех потребителей) ──────── */
 
@@ -758,6 +828,7 @@ int main(int argc, char *p_argv[])
     uart_close(app.uart);
     renderer_destroy(app.renderer);
     video_player_close(app.video);
+    audio_player_close(app.audio);
     (void) close(timer_fd);
     (void) close(sig_fd);
 

@@ -66,7 +66,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     clang-tidy-17 \
     # Remote debug
     gdb-multiarch \
-    # Host тесты (нужен libpng для host-сборки если будем тестировать PNG)
+    # Для хост-тестов
     libpng-dev \
     # SSH для just pi::* и GDB tunnel
     openssh-client \

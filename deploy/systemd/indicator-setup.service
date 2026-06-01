@@ -1,0 +1,29 @@
+[Unit]
+Description=Lift Indicator — MCU Setup (pull / menu / push)
+# Запускаться после монтирования /data (bind mounts из fstab)
+After=local-fs.target
+# Запускаться до indicator — установить статус до старта рендерера
+Before=indicator.service
+
+[Service]
+Type=oneshot
+# После завершения остаётся "active" — systemd не перезапускает при restart indicator
+RemainAfterExit=yes
+User=pi
+WorkingDirectory=/home/pi/indicator
+
+# TUI (cursive) рисуется на физическом дисплее через tty1.
+# getty@tty1 замаскирован в setup_pi.sh.
+TTYPath=/dev/tty1
+StandardInput=tty
+StandardOutput=tty
+StandardError=journal
+
+ExecStart=/home/pi/indicator/scripts/run_setup.sh
+
+# 30s меню + по 30s на pull/push + буфер
+TimeoutStartSec=120
+
+[Install]
+# Не WantedBy — подтягивается indicator.service через Wants=
+WantedBy=multi-user.target

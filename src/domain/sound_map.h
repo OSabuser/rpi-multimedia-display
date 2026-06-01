@@ -69,7 +69,7 @@ typedef struct
  *
  * Чистая функция без побочных эффектов.
  */
-void sound_map_resolve(sound_t sound, floor_t floor, audio_sequence_t *out);
+void sound_map_resolve(sound_t sound, floor_t floor, audio_sequence_t *p_out);
 
 /**
  * sound_map_volume_percent — вернуть громкость для данного события.

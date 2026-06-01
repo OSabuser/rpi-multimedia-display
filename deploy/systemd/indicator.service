@@ -1,9 +1,7 @@
 [Unit]
 Description=Lift Indicator Daemon
-# sound.target: ALSA должна быть готова до запуска (aplay в Фазе 5)
-# Сеть не нужна — локальное UART-устройство
-After=sound.target  
-Wants=sound.target
+After=sound.target indicator-setup.service
+Wants=sound.target indicator-setup.service
 
 [Service]
 Type=simple
@@ -13,21 +11,13 @@ WorkingDirectory=/home/pi/indicator
 ExecStart=/home/pi/indicator/indicator \
     --config=/data/pi_nku_configs/nku_scheme.toml
 
-# Перезапускать всегда: и при краше, и при ненулевом exit-коде
 Restart=always
 RestartSec=2
-
-# Дать процессу 5 секунд на корректное завершение по SIGTERM,
-# затем SIGKILL. Наш poll-цикл завершается за << 1 с.
 TimeoutStopSec=5
+KillMode=control-group
 
-# Весь вывод (stdout + stderr + syslog) → journald
 StandardOutput=journal
 StandardError=journal
-
-# Метка в journald: journalctl -u indicator  ИЛИ  journalctl -t indicator
-# Без этого systemd использует имя исполняемого файла, что обычно совпадает,
-# но явное задание надёжнее при переименовании бинаря.
 SyslogIdentifier=indicator
 
 [Install]
