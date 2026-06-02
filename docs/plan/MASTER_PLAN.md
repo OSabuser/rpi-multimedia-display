@@ -1,8 +1,9 @@
 # Lift Indicator — Мастер-план
 
-> **Статус:** Фазы 0–1 закрыты. Фаза 2 в работе.
+> **Статус:** Фазы 0–5, Phase Deploy и Phase Deploy Addendum — ЗАКРЫТЫ.
+> Фаза 6 (Deploy v2: overlayroot, build\_image, factory-test) — В РАБОТЕ.
 > **Стек:** C11 · DispmanX · omxplayer · ALSA · systemd · CMake · Docker · just
-> **Компилятор:** `zig cc` (`arm-zig-cc` wrapper) — ARMv6, arm1176jzf_s, hard-float
+> **Компилятор:** `zig cc` (`arm-zig-cc` wrapper) — ARMv6, arm1176jzf\_s, hard-float
 > **Устройство:** Raspberry Pi Zero W Rev 1.1 · ARM1176JZF-S · ARMv6ZK · Debian Buster
 
 ---
@@ -12,25 +13,32 @@
 | Тема | Решение | Обоснование |
 |---|---|---|
 | ОС | Raspbian **Buster Lite** (CLI, без X11) | DispmanX и omxplayer работают без GUI; экономия ~100 MB RAM и ~20 с загрузки |
-| Железо | **Raspberry Pi Zero W** (ARM1176JZF-S, ARMv6ZK) | Уточнено в Фазе 1 — не 2W, а первый Zero W |
+| Железо | **Raspberry Pi Zero W Rev 1.1** (ARM1176JZF-S, ARMv6ZK) | Уточнено в Фазе 1 — не 2W, а первый Zero W; ARMv6, не ARMv8 |
 | Автозапуск | **systemd units** | Supervision, логи в journald, restart policy |
 | Рендеринг | **DispmanX** (сохраняем) | Zero-overhead overlay поверх omxplayer на этом железе |
 | Видеоплеер | **omxplayer** (сохраняем) | OpenMAX IL, минимальная нагрузка на CPU; заменить только при смене ОС |
+| omxplayer надзор | `posix_spawn` + `POSIX_SPAWN_SETPGROUP` + `killpg(SIGKILL)` + SIGCHLD watchdog | SIGTERM не работает для bash-обёртки omxplayer; SIGKILL надёжен |
+| VideoCore dormant | `renderer_keepalive()` — пустой DispmanX update каждые 30 с | P-28: VideoCore IV засыпает при отсутствии DispmanX-активности |
+| libpng | Динамическая линковка `libpng16.so` (не .a) | P-27: `libpng16.a` из Debian armhf скомпилирована под ARMv7 → segfault на ARMv6 до `main()` |
 | Аудио backend | **ALSA softvol + aplay** | MAX98357 не имеет HW volume в ALSA; softvol в asound.conf — легче PulseAudio |
 | Аудио из кода | `posix_spawn("aplay")` в отдельном pthread | Нет shell overhead; latency ~30 ms вместо ~150 ms с `system()` |
 | Аудио очередь | Приоритетная, глубина 3 | CRITICAL > FLOOR > MOVEMENT > MUSIC |
-| notify | **Упраздняется** | SPRITE_NOTIFICATION — слот в renderer; нет spawn/pkill |
-| Рендеринг цифр | **PNG сейчас**, font-renderer — Фаза 8 | Все PNG одного размера → changeSourceImageLayer без мигания |
+| notify | **Упраздняется** — SPRITE\_NOTIFICATION — слот в renderer | Нет spawn/pkill; нет отдельного `notify` процесса |
+| Рендеринг цифр | **PNG сейчас**, font-renderer — Фаза 8 (low priority) | Все PNG одного размера → `changeSourceImageLayer` без мигания |
 | BACK.png | RGBA PNG поверх видео, путь в конфиге | Статична сейчас, легко сменить в будущем |
-| group_number | Только конфиг MCU | Не используется в логике индикатора |
+| Конфиг | **TOML** (`nku_scheme.toml`, `pi_scheme.toml`, `video.toml`, `renderer.toml`) | `pizero.ini` — legacy, не используется |
+| Конфиг — парсер | **Hand-written line parser** (без зависимостей) | inih не подключён; TOML-подмножество достаточно |
+| Setup TUI | **pi\_nku\_menu** (Rust, pre-built) + **pi\_nku\_sync** (Rust, pre-built) | Внешние бинари из `config_toolset`; С-демон их только вызывает через `indicator-setup.service` |
 | Task runner | **just** (mod build / mod pi) | `mod build` = devcontainer, `mod pi` = хост |
-| Кросс-компилятор | **zig cc** (`arm-zig-cc` wrapper) | `arm-linux-gnueabihf-gcc` из Bookworm содержит crt*.o под glibc 2.34+ — segfault на Buster; zig компилирует crt точно под arm1176jzf_s |
+| Кросс-компилятор | **zig cc** (`arm-zig-cc` wrapper) | `arm-linux-gnueabihf-gcc` из Bookworm содержит crt*.o под glibc 2.34+ — segfault на Buster; zig компилирует crt точно под arm1176jzf\_s |
 | Docker base | **Ubuntu 22.04 + LLVM 17 + zig 0.13.0** | Debian Buster в Docker — проблемы с arm64 (Rosetta); Ubuntu Jammy + official LLVM repo решает всё |
-| Деплой | **Base image + rsync** | Flash один раз, обновление приложения через rsync |
+| Деплой | **rsync** (быстро) + **base image** (flash для новых устройств) | rsync для обновлений при разработке; образ для производства |
+| Layout данных | **`/data/`** — writable раздел (сейчас директория, в Deploy v2 — ext4 раздел) | Bind-монты: `/data/*` → `/home/pi/indicator/*`; rootfs в будущем read-only |
+| Boot splash | **fbi** (3 сек, через sudoers, в `run_setup.sh`) | Plymouth не установлен на Buster Lite; отдельный systemd service не работал надёжно |
+| Консоль ядра | **tty3** (`console=tty3 quiet loglevel=3` в cmdline.txt) | Артефакты ядра/systemd на tty1 мешали TUI; tty1 — только для меню |
+| KillMode | **`control-group`** в `indicator.service` | dbus-daemon (от omxplayer) вне pgroup; cgroup убивает его надёжно |
 | Тесты | **Unity** (vendored, MIT) | Один .c/.h файл, компилируется везде |
-| Код Andrew Duncan | **Переносим без изменений** в `platform/dispmanx/layers/` | MIT, корректный, не трогаем |
-| Конфиг | **`nku_scheme.toml`** (TOML) | `pizero.ini` — legacy, не используется; `config_utility` и `rpi_menu` работают с TOML |
-| inih | **Не используется** | Конфиг — TOML, свой парсер; inih зарезервирован, не подключён |
+| Код Andrew Duncan | Перенесён без изменений в `platform/dispmanx/layers/` | MIT, корректный, clang-tidy отключён для этой директории |
 
 ---
 
@@ -38,77 +46,111 @@
 
 > SSH: `ssh -i ~/.ssh/id_ed25519 pi@indicator-01.local`
 
-### 2.1 Процессная модель
+### 2.1 Граф systemd
 
 ```
-systemd
-├── indicator-setup.service   [oneshot, Before=indicator.service]
-│     config_utility --mode=pull
-│     rpi_menu (TUI на /dev/tty1)
-│     config_utility --mode=push
-│
-├── indicator.service         [Restart=always, RestartSec=2]
-│     ├── [poll loop]  uart_fd · fifo_fd · signalfd · timerfd
-│     ├── [pthread]    audio player (posix_spawn aplay)
-│     └── [child]      omxplayer  (posix_spawn, SIGCHLD watchdog)
-│
-└── media-ingest.service      [Restart=on-failure, RestartSec=5]
+multi-user.target
+├── indicator-firstboot.service   [ConditionPathExists=!/data/first_boot_done]
+│     first_boot.sh: уникальный hostname + SSH keys + machine-id
+│           ↓ Before
+├── indicator-setup.service       [oneshot, RemainAfterExit=yes, TTYPath=/dev/tty1]
+│     run_setup.sh:
+│       0. fbi splash.jpg (3 с)
+│       1. pi_nku_sync --mode=pull     → /data/pi_nku_configs/
+│       2. pi_nku_menu (TUI, 30 с)    → правка параметров
+│       3. pi_nku_sync --mode=push    → конфиг → MCU
+│       4. echo status → /data/setup_status
+│           ↓ Wants + Before
+└── indicator.service             [Restart=always, RestartSec=2, KillMode=control-group]
+      reads /data/setup_status
+      ├── [poll loop]  uart_fd · fifo_fd · signalfd · timerfd
+      ├── [pthread]    audio player (posix_spawn aplay, amixer)
+      └── [child]      omxplayer  (posix_spawn, POSIX_SPAWN_SETPGROUP, SIGCHLD watchdog)
+
+media-ingest.service              [Restart=on-failure, RestartSec=5]  ← Фаза 7
       inotify /dev → mount → ffmpeg → FIFO → indicator
 ```
 
-### 2.2 Z-порядок DispmanX
+### 2.2 Z-порядок DispmanX (финальный, Phase 4)
 
 ```
-Z = 1   omxplayer  (--layer 1)        видео
-Z = 2   BACKGROUND                    BACK.png (RGBA)
-Z = 3   DIGIT_LEFT, DIGIT_RIGHT       цифры этажа
-Z = 3   ARROW                         стрелка направления
-Z = 3   WEIGHT                        шильдик грузоподъёмности
-Z = 4   MODE                          режим (пожар, перегрузка…)
-Z = 5   NOTIFICATION                  баннер USB-статуса
+Z = 1   omxplayer           видео (--layer 1)
+Z = 2   SPRITE_BACKGROUND   BACK.png, 600×1024, полупрозрачный RGBA
+Z = 3   SPRITE_MODE         mode-иконка, 600×1024 (или скрыт при MODE_NORMAL)
+Z = 4   SPRITE_WEIGHT       load_N.png, 237×59
+Z = 4   SPRITE_DIGIT_LEFT   chars/N.png, 202×346   ← fast_update
+Z = 4   SPRITE_DIGIT_RIGHT  chars/N.png, 202×346   ← fast_update
+Z = 4   SPRITE_ARROW        arrows/up|down.png, 188×209
+Z = 5   SPRITE_NOTIFICATION (Фаза 7 — не реализован)
 ```
+
+**fast\_update:** DIGIT\_LEFT, DIGIT\_RIGHT используют `changeSourceImageLayer` (без мигания).
+**ARROW:** при каждом появлении использует slow path (destroy + recreate) — P-29, будет исправлено в Deploy v2.
 
 ### 2.3 Главный цикл — однопоточный poll
 
 ```
 poll()
-  ├── uart_fd     → сборка бинарного фрейма → CRC16 → parse_payload()
-  │                  → state_apply_frame()
-  │                  → renderer_show_sprite_*()
-  │                  → audio_player_play()
+  ├── uart_fd     → сборка бинарного фрейма → CRC16 → protocol_parse_frame()
+  │                  → on_uart_frame()
+  │                  │   opcode=0xDA: state_apply_frame() → renderer_apply_elevator()
+  │                  │                                    → audio_player_play()
+  │                  │   opcode=0xAA: state_apply_dispatch() → renderer_apply_dispatch()
+  │                  │                                       → audio_player_cancel_music()
+  │                  └   opcode=0xC0: LOG_DEBUG (служебный, игнорируется)
   │
-  ├── fifo_fd     → media_status_t от media-ingest
-  │                  → renderer_show_sprite(NOTIFICATION, ...)
-  │                  → video_player_replace() при DONE
+  ├── fifo_fd     → media_status_t от media-ingest  ← Фаза 7
+  │                  → renderer_show_png(SPRITE_NOTIFICATION, ...)
+  │                  → video_player_replace() при MEDIA_STATUS_DONE
   │
-  ├── signalfd    → SIGCHLD → video_player_check_and_restart()
+  ├── signalfd    → SIGTERM/SIGINT → shutdown
+  │               → SIGCHLD → video_player_check_and_restart()
   │
-  └── timerfd     → watchdog heartbeat, лог статистики
+  └── timerfd     → watchdog tick каждые 30 с:
+                      log статистика + renderer_keepalive() (P-28 fix)
 ```
 
 ### 2.4 Обновление DispmanX-слотов
 
 ```
-DIGIT_LEFT, DIGIT_RIGHT, ARROW   →  fast_update = true
+DIGIT_LEFT, DIGIT_RIGHT → fast_update = true
   Первый раз: loadPng → createResourceImageLayer → addElementImageLayerOffset
   Обновление: loadPng → resource_write_data → changeSourceImageLayer
-  Скрытие:    destroyImageLayer
+  Скрытие:    destroyImageLayer (→ initialized=0; P-29: будет ELEMENT_CHANGE_OPACITY=0)
 
-BACKGROUND, WEIGHT, MODE,
-NOTIFICATION                     →  fast_update = false
+BACKGROUND, WEIGHT, MODE, NOTIFICATION → fast_update = false
   Любое изменение: destroyImageLayer → loadPng → create → add
+
+ARROW → slow path при каждом появлении (P-29, см. Deploy v2)
 ```
 
 ### 2.5 Аудио — приоритеты
 
 ```
-AUDIO_PRIO_CRITICAL = 0   ←  overload / fire alarm (высший)
-AUDIO_PRIO_FLOOR    = 1   ←  анонс этажа (ding + "этаж N")
-AUDIO_PRIO_MOVEMENT = 2   ←  up / down (+ музыка)
-AUDIO_PRIO_MUSIC    = 3   ←  только трек (низший)
+AUDIO_PRIO_CRITICAL = 0   ← SOUND_OVERLOAD / SOUND_FIRE_ALARM / SOUND_DONT_WORK
+AUDIO_PRIO_FLOOR    = 1   ← SOUND_DING (анонс этажа)
+AUDIO_PRIO_MOVEMENT = 2   ← SOUND_UP / SOUND_DOWN / SOUND_CLOSING / SOUND_OPENING / SOUND_BUTTON
+AUDIO_PRIO_MUSIC    = 3   ← фоновая музыка (mus1..mus7.wav)
 
-Правило: новый < текущего  →  прервать немедленно
-         новый >= текущего →  добавить в очередь (FIFO, depth=3)
+Правило вытеснения: effective_prio = min(current_prio, min_queue_prio)
+  new_prio < effective_prio → kill(aplay, SIGTERM) + clear queue
+  new_prio ≥ effective_prio → добавить в очередь (FIFO depth=3)
+
+После UP/DOWN: music_wanted=1 → worker запускает mus<N>.wav
+При MODE_ABNORMAL или dispatch активен: needs_music=0 (музыка не запускается)
+При отмене: audio_player_cancel_music() → kill если играет, clear music_wanted
+```
+
+### 2.6 Загрузочная последовательность
+
+```
+GPU bootloader      → чёрный экран (splash не поддерживается этой прошивкой)
+Ядро + systemd      → tty3 (console=tty3 quiet loglevel=3 — не видно)
+indicator-firstboot → уникальный hostname + SSH keys (только первый старт)
+indicator-setup     → tty2: fbi splash.jpg (3 сек)
+                    → tty1: чистый экран → pi_nku_sync pull → pi_nku_menu → push
+                    → /data/setup_status: ok | pull_failed | push_failed | pending
+indicator           → DispmanX init → omxplayer → рендерер → UART polling
 ```
 
 ---
@@ -117,37 +159,37 @@ AUDIO_PRIO_MUSIC    = 3   ←  только трек (низший)
 
 ### Платформонезависимые (тестируются на хосте)
 
+| Модуль | Файл | Ответственность | Тесты |
+|---|---|---|---|
+| Config | `src/config/config.c/.h` | Парсинг nku\_scheme.toml, video.toml, renderer.toml, pi\_scheme.toml; дефолты | test\_config (21 case) |
+| Protocol types | `src/protocol/types.h` | Enum'ы: `char_code_t`, `arrow_t`, `sound_t`, `indicator_mode_t`, `dispatch_state_t`, `parsed_frame_t` | — |
+| Protocol parser | `src/protocol/parser.c/.h` | `protocol_parse_frame()` + `protocol_parse_payload()` + `protocol_parse_dispatch()`; CRC-16 little-endian; без malloc | test\_parser |
+| Floor codec | `src/domain/floor.c/.h` | char codes → `floor_t` (NORMAL/BASEMENT/BASEMENT\_N/NEGATIVE/UNKNOWN) | test\_floor |
+| Sound map | `src/domain/sound_map.c/.h` | `sound_map_resolve()` → `audio_sequence_t` с WAV-файлами | test\_sound\_map |
+| State machine | `src/domain/state.c/.h` | `state_apply_frame()`, `state_apply_dispatch()` → `state_update_result_t` | test\_state |
+| Renderer interface | `src/renderer/renderer.h` | API-контракт: `show_png`, `hide`, `keepalive`, `create`, `destroy`; без bcm\_host.h | — |
+
+### Только Pi (не тестируются на хосте без устройства)
+
 | Модуль | Файл | Ответственность |
 |---|---|---|
-| Config | `src/config/config.c/.h` | Парсинг nku_scheme.toml, дефолты, валидация |
-| Protocol types | `src/protocol/types.h` | Enum'ы: `arrows_state_t`, `el_mode_t`, `s_code_t`, `parsed_payload_t` |
-| Protocol parser | `src/protocol/parser.c/.h` | `protocol_parse_frame()` + `protocol_parse_payload()`, CRC-16, без malloc |
-| Floor codec | `src/domain/floor.c/.h` | Коды символов → номер этажа |
-| Sound map | `src/domain/sound_map.c/.h` | `sound_map_resolve()`, `sound_map_volume_percent()` |
-| State machine | `src/domain/state.c/.h` | `state_apply_frame()` → `state_update_result_t` |
-| Renderer interface | `src/renderer/renderer.h` | Только API, без bcm_host.h |
+| UART transport | `src/transport/uart.c/.h` | termios raw; кольцевой буфер; `protocol_parse_frame()` интеграция; `frame_ready_cb_t`; `uart_wrap_fd()` для тестов | test\_uart (pipe) |
+| Audio player | `src/audio/audio.c/.h` | pthread + mutex + condvar; приоритетная очередь depth=3; posix\_spawn aplay; amixer volume; фоновая музыка | — (on-target) |
+| Video player | `src/player/video_player.c/.h` | posix\_spawn omxplayer + POSIX\_SPAWN\_SETPGROUP; killpg(SIGKILL); SIGCHLD watchdog | — (on-target) |
+| Media IPC | `src/media/media_ipc.c/.h` | Чтение статуса из FIFO (stub, Фаза 7) | — |
+| DispmanX renderer | `platform/dispmanx/renderer_impl.c` | Реализует renderer.h через DispmanX API | — (on-target) |
+| DispmanX layers | `platform/dispmanx/layers/` | Andrew Duncan (MIT) — imageLayer, loadpng; не изменяем | — |
+| Main | `src/main.c` | Composition root; poll-цикл (uart/sig/timer); init/cleanup всех модулей; setup\_status | — |
 
-### Только Pi
-
-| Модуль | Файл | Ответственность |
-|---|---|---|
-| UART transport | `src/transport/uart.c/.h` | termios, сборка бинарных фреймов, `frame_ready_cb_t` |
-| Audio player | `src/audio/audio.c/.h` | pthread, приоритетная очередь, posix_spawn aplay |
-| Video player | `src/player/video_player.c/.h` | posix_spawn omxplayer, SIGCHLD watchdog |
-| Media IPC | `src/media/media_ipc.c/.h` | Чтение статуса из FIFO |
-| DispmanX renderer | `platform/dispmanx/renderer_impl.c/.h` | Реализует renderer.h через DispmanX |
-| DispmanX layers | `platform/dispmanx/layers/` | Andrew Duncan — без изменений |
-| Main | `src/main.c` | Composition root, poll-цикл, signal handling |
-
-### Отдельный демон media-ingest
+### Отдельный демон media-ingest (Фаза 7 — stub)
 
 | Файл | Ответственность |
 |---|---|
-| `src_media_ingest/main.c` | Точка входа, poll-цикл |
-| `src_media_ingest/usb_watcher.c/.h` | inotify на /dev (IN_CREATE/IN_DELETE) |
+| `src_media_ingest/main.c` | Точка входа (сейчас stub) |
+| `src_media_ingest/usb_watcher.c/.h` | inotify на /dev (IN\_CREATE/IN\_DELETE) |
 | `src_media_ingest/mounter.c/.h` | mount/umount, fallback /dev/sdX1 → /dev/sdX |
 | `src_media_ingest/ffmpeg_runner.c/.h` | ffmpeg concat, atomic rename() |
-| `src_media_ingest/status_pipe.c/.h` | Запись статуса в FIFO |
+| `src_media_ingest/status_pipe.c/.h` | Запись статуса в FIFO → indicator |
 
 ---
 
@@ -156,21 +198,19 @@ AUDIO_PRIO_MUSIC    = 3   ←  только трек (низший)
 ```
 lift-indicator/
 │
-├── justfile                         ← корневой оркестратор (mod build, pi, ci)
-├── bootstrap.sh                     ← уровень 0: just + SSH ключ + sysroot + Docker
-├── .env.example                     ← шаблон (PI_HOST, PI_USER, PI_DIR, BUILD_DIR)
-├── .gitignore
-├── .clang-format
+├── justfile                        ← корневой оркестратор (mod build, pi, ci)
+├── bootstrap.sh                    ← уровень 0: just + SSH ключ + sysroot + Docker
+├── .env.example                    ← шаблон (PI_HOST, PI_USER, PI_DIR, BUILD_DIR)
 │
 ├── just/
-│   ├── build.just                   ← devcontainer: тесты, Pi сборка, format
-│   ├── pi.just                      ← хост: deploy, SSH, setup, logs, smoke
-│   └── ci.just                      ← CI pipeline
+│   ├── build.just                  ← devcontainer: тесты, Pi сборка, format
+│   ├── pi.just                     ← хост: deploy, SSH, setup, logs, smoke
+│   └── ci.just                     ← CI pipeline
 │
 ├── cmake/
-│   ├── Toolchain-RPiZeroW.cmake     ← arm-zig-cc + /opt/vc (ARMv6, arm1176jzf_s)
-│   ├── Warnings.cmake               ← apply_warnings(target)
-│   └── Sanitizers.cmake             ← ASan / UBSan
+│   ├── Toolchain-RPiZeroW.cmake    ← arm-zig-cc + /opt/vc (ARMv6, arm1176jzf_s)
+│   ├── Warnings.cmake              ← apply_warnings(target)
+│   └── Sanitizers.cmake            ← ASan / UBSan
 │
 ├── CMakeLists.txt
 │
@@ -183,58 +223,74 @@ lift-indicator/
 │   ├── transport/      uart.h / uart.c
 │   ├── audio/          audio.h / audio.c
 │   ├── player/         video_player.h / video_player.c
-│   └── media/          media_ipc.h / media_ipc.c
+│   └── media/          media_ipc.h / media_ipc.c  (stub, Фаза 7)
 │
-├── src_media_ingest/
-│   ├── main.c
-│   ├── usb_watcher.h/c
-│   ├── mounter.h/c
-│   ├── ffmpeg_runner.h/c
-│   └── status_pipe.h/c
+├── src_media_ingest/               ← отдельный демон (stub main.c, Фаза 7)
+│   └── main.c
 │
 ├── platform/
 │   └── dispmanx/
 │       ├── CMakeLists.txt
-│       ├── renderer_impl.h / renderer_impl.c
-│       └── layers/                  ← Andrew Duncan (MIT), без изменений
-│           ├── image.h / image.c
-│           ├── image_layer.h / image_layer.c
-│           ├── background_layer.h / background_layer.c
-│           ├── loadpng.h / loadpng.c
-│           └── element_change.h
+│       ├── renderer_impl.c
+│       └── layers/                 ← Andrew Duncan (MIT)
 │
 ├── tests/
 │   ├── CMakeLists.txt
-│   ├── unity/           unity.h / unity.c   (MIT, vendored)
+│   ├── unity/           unity.h / unity.c (MIT, vendored)
 │   ├── test_parser.c
 │   ├── test_floor.c
 │   ├── test_state.c
 │   ├── test_sound_map.c
-│   └── test_config.c
+│   ├── test_config.c
+│   └── test_uart.c
+│
+├── tools/
+│   ├── uart_rx_dump.c              ← диагностическая утилита UART
+│   └── CMakeLists.txt
 │
 ├── build-env/
-│   ├── Dockerfile                   ← Ubuntu 22.04 + LLVM 17 + zig 0.13.0 + /opt/vc
-│   └── pi-sysroot/                  ← .gitignore; копируется: just pi::fetch-sysroot
-│       └── opt/vc/
-│
-├── .devcontainer/
-│   └── devcontainer.json
+│   ├── Dockerfile                  ← Ubuntu 22.04 + LLVM 17 + zig 0.13.0 + /opt/vc
+│   └── pi-sysroot/                 ← .gitignore; копируется fetch-sysroot + fetch-png-sysroot
+│       ├── opt/vc/                 ← DispmanX, bcm_host
+│       └── usr/                    ← libpng16.so + zlib.so + headers
 │
 ├── deploy/
-│   ├── indicator-setup.service
-│   ├── indicator.service
-│   ├── media-ingest.service
-│   ├── indicator.target
-│   └── asound.conf                  ← ALSA softvol для MAX98357
+│   ├── systemd/
+│   │   ├── indicator-firstboot.service
+│   │   ├── indicator-setup.service
+│   │   ├── indicator.service
+│   │   ├── indicator.target
+│   │   └── media-ingest.service
+│   ├── configs/                    ← nku_scheme.toml, pi_scheme.toml, video.toml, renderer.toml, menu_style.toml
+│   ├── resources/                  ← PNG (chars, arrows, modes, weights, BACK.png)
+│   ├── sounds/                     ← WAV файлы
+│   ├── video/
+│   │   └── output.mp4              ← фоновое видео
+│   ├── boot/
+│   │   ├── config.txt              ← /boot/config.txt
+│   │   └── splash.jpg              ← boot splash (600×1024)
+│   ├── bin/                        ← pre-built Rust: pi_nku_sync, pi_nku_menu
+│   └── tools/                      ← MUp-rpi0 (диагностика STM32)
 │
 ├── scripts/
-│   ├── setup_pi.sh                  ← первичная настройка Pi (пакеты, ALSA, dirs)
-│   └── smoke_test.sh                ← проверка после деплоя
+│   ├── setup_pi.sh                 ← первичная настройка Pi (пакеты, ALSA, /data, fstab)
+│   ├── run_setup.sh                ← indicator-setup: splash → pull → menu → push → status
+│   ├── first_boot.sh               ← уникальный hostname + SSH keys + machine-id
+│   ├── smoke_test.sh               ← проверка после деплоя
+│   └── check_resources.sh          ← валидация 79 ресурсов на устройстве
+│
+├── third_party/
+│   └── config_toolset/             ← Rust workspace: pi_nku_sync, pi_nku_menu (external submodule)
 │
 └── docs/
-    ├── DEV_ARCH.md                  ← рабочее окружение (актуально)
-    ├── ARCHITECTURE.md              ← архитектура приложения (Фаза 9)
-    └── UART_PROTOCOL.md             ← протокол STM32 → Pi (Фаза 9)
+    ├── DEV_ARCH.md                 ← рабочее окружение разработчика
+    ├── RPI_SYSROOT.md              ← инструкция по sysroot
+    └── plan/                       ← история фаз (phase reports)
+        ├── MASTER_PLAN.md
+        ├── PHASE_0_REPORT.md … PHASE_4_REPORT.md
+        ├── PHASE_DEPLOY_PLAN.md
+        ├── PHASE_DEPLOY_REPORT.md
+        └── ADD_DEPLOY_REPORT.md
 ```
 
 ---
@@ -243,7 +299,7 @@ lift-indicator/
 
 `just` без аргументов выводит все команды с описаниями.
 
-### Хост (до открытия devcontainer)
+### Хост — первичная настройка
 
 | Команда | Что делает |
 |---|---|
@@ -251,40 +307,71 @@ lift-indicator/
 | `just pi::check-deps` | Проверить just, docker, ssh, rsync |
 | `just pi::setup-ssh` | Сгенерировать SSH-ключ, скопировать на Pi |
 | `just pi::fetch-sysroot` | Скопировать /opt/vc с Pi для Docker |
+| `just pi::fetch-png-sysroot` | Скопировать libpng16.so + headers с Pi |
 | `just pi::build-image` | Собрать Docker образ indicator-build |
 | `just pi::bootstrap` | Всё выше в одну команду |
-| `just pi::setup-pi` | Первичная настройка Pi (пакеты, ALSA, dirs) |
+| `just pi::setup-pi` | Первичная настройка Pi (пакеты, ALSA, /data layout, bind mounts, fstab) |
+| `just pi::migrate-data` | Одноразовая миграция существующей Pi на /data layout |
+| `just pi::enable-services` | `systemctl enable` для всех indicator сервисов |
+| `just pi::setup-gdbserver` | Установить gdbserver на Pi (один раз) |
 
-### Devcontainer (сборка и тесты)
+### Devcontainer — сборка и тесты
 
 | Команда | Что делает |
 |---|---|
-| `just build::test` | Host unit-тесты (Debug + ASan/UBSan) |
+| `just build::test` | Host unit-тесты (Debug + ASan/UBSan) — 6 суитов |
 | `just build::test-verbose` | То же, подробный вывод |
-| `just build::pi` | Кросс-компиляция indicator + media_ingest |
+| `just build::pi` | Кросс-компиляция: indicator + media\_ingest + uart\_rx\_dump |
 | `just build::pi-indicator` | Только indicator |
+| `just build::pi-ingest` | Только media\_ingest |
+| `just build::pi-dump` | Только uart\_rx\_dump |
 | `just build::pi-debug` | Debug-сборка (-g3 -O0) для GDB |
 | `just build::format` | Применить clang-format |
-| `just build::check-format` | Проверить форматирование (без изменений) |
+| `just build::check-format` | Проверить форматирование (CI) |
 | `just build::clean` | Удалить build/ (с подтверждением) |
 
-### Хост (работа с Pi)
+### Хост — деплой
 
 | Команда | Что делает |
 |---|---|
-| `just pi::deploy` | Бинари + скрипты + systemd units на Pi |
-| `just pi::deploy-bin` | Только бинари (быстро) |
-| `just pi::deploy-debug` | Debug-бинарь для GDB |
-| `just pi::ssh` | SSH на Pi |
-| `just pi::logs` | Хвост логов indicator в реальном времени |
+| `just pi::deploy` | Бинари + tools + Rust + скрипты + systemd + конфиги |
+| `just pi::deploy-full` | deploy + ресурсы + звуки + splash + видео (первая установка) |
+| `just pi::deploy-bin` | Только indicator + media\_ingest (быстро) |
+| `just pi::deploy-tools` | uart\_rx\_dump + MUp-rpi0 |
+| `just pi::deploy-rust` | pi\_nku\_sync + pi\_nku\_menu |
+| `just pi::deploy-scripts` | Все sh-скрипты |
+| `just pi::deploy-systemd` | systemd units + daemon-reload |
+| `just pi::deploy-configs` | deploy/configs/ → /data/pi\_nku\_configs/ |
+| `just pi::deploy-resources` | deploy/resources/ → /data/resources/ |
+| `just pi::deploy-sounds` | deploy/sounds/ → /data/sounds/ |
+| `just pi::deploy-splash` | deploy/boot/splash.jpg → Pi |
+| `just pi::deploy-video` | deploy/video/output.mp4 → /data/videos/ |
+| `just pi::deploy-debug` | indicator-debug для GDB |
+| `just pi::check-resources` | Валидация 79 ресурсов на Pi |
+
+### Хост — управление
+
+| Команда | Что делает |
+|---|---|
+| `just pi::restart` | Перезапустить indicator.service |
+| `just pi::start` | Запустить indicator.service |
+| `just pi::stop` | Остановить indicator.service |
+| `just pi::status` | Статус indicator + media-ingest |
+| `just pi::logs` | Хвост логов indicator (следить в реальном времени) |
 | `just pi::logs-ingest` | Хвост логов media-ingest |
-| `just pi::status` | Статус всех сервисов |
-| `just pi::restart` | Перезапустить indicator |
+| `just pi::logs-tail [n]` | Последние N строк обоих сервисов |
+| `just pi::ssh` | SSH на Pi |
 | `just pi::smoke` | Smoke test после деплоя |
 | `just pi::test-audio` | Воспроизвести тестовый WAV на Pi |
+| `just pi::test-video` | Сгенерировать тестовое видео ffmpeg → Pi |
+| `just pi::dump` | uart\_rx\_dump (остановить indicator, слушать, поднять обратно) |
+| `just pi::dump-passive` | uart\_rx\_dump без остановки indicator (только наблюдение) |
+| `just pi::top` | CPU/RAM на Pi |
+| `just pi::df` | Место на SD-карте |
+| `just pi::backup-image /dev/diskN` | Создать .img.gz образа SD-карты |
 | `just pi::gdbserver-start` | SSH-туннель + gdbserver на Pi |
 | `just pi::gdbserver-stop` | Остановить gdbserver |
-| `just pi::backup-image /dev/diskN` | Создать .img.gz образа SD-карты |
+| `just pi::debug-output` | tail /tmp/gdbserver.log |
 
 ### Алиасы верхнего уровня
 
@@ -292,13 +379,13 @@ lift-indicator/
 |---|---|
 | `just init` | = `just pi::bootstrap` |
 | `just test` | = `just build::test` |
-| `just ship` | docker run → `just build::pi` + `just pi::deploy` |
+| `just ship` | docker run build::pi → deploy → check-resources → restart |
 
 ### CI
 
 | Команда | Что делает |
 |---|---|
-| `just ci::pipeline` | format-check + host tests |
+| `just ci::pipeline` | check-format + host tests |
 | `just ci::test` | Host unit-тесты |
 | `just ci::check-format` | Проверка форматирования |
 
@@ -306,15 +393,17 @@ lift-indicator/
 
 ## 6. CMake таргеты
 
-| Таргет | Тип | Хост | Pi |
-|---|---|---|---|
-| `indicator_domain` | static lib | ✅ | ✅ |
-| `unity` | static lib | ✅ | — |
-| `test_parser` … `test_config` | executables | ✅ | — |
-| `dispmanx_layers` | static lib | ❌ | ✅ |
-| `dispmanx_renderer` | static lib | ❌ | ✅ |
-| `indicator` | executable | ❌ | ✅ |
-| `media_ingest` | executable | ❌ | ✅ |
+| Таргет | Тип | Хост | Pi | Санитайзеры |
+|---|---|---|---|---|
+| `indicator_domain` | static lib | ✅ | ✅ | ASan+UBSan (host Debug) |
+| `indicator_transport` | static lib | ✅ | ✅ | ASan+UBSan (host Debug) |
+| `unity` | static lib | ✅ | — | — |
+| `test_parser … test_config` | executables (5) | ✅ | — | ✅ |
+| `test_uart` | executable | ✅ | — | ✅ |
+| `dispmanx_renderer` | static lib | ❌ | ✅ | — |
+| `indicator` | executable | ❌ | ✅ | — |
+| `media_ingest` | executable | ❌ | ✅ | — |
+| `uart_rx_dump` | executable | ❌ | ✅ | — |
 
 ```bash
 # Host (тесты):
@@ -330,6 +419,7 @@ cmake -B build/pi \
   -DCMAKE_TOOLCHAIN_FILE=cmake/Toolchain-RPiZeroW.cmake \
   -DINDICATOR_PLATFORM_DISPMANX=ON \
   -DINDICATOR_BUILD_TESTS=OFF \
+  -DINDICATOR_BUILD_INGEST=ON \
   -DCMAKE_BUILD_TYPE=Release
 ```
 
@@ -337,10 +427,8 @@ cmake -B build/pi \
 
 ## 7. Рабочее окружение
 
-### Разделение контекстов
-
 ```
-ПК (macOS / Linux / Windows+GitBash)
+ПК (macOS / Linux)
 │
 ├── Хост
 │   ├── just       ← just pi::*
@@ -349,86 +437,66 @@ cmake -B build/pi \
 │   └── VSCode     ← IDE (Dev Containers extension)
 │
 ├── Devcontainer (Docker: indicator-build, Ubuntu 22.04)
-│   ├── arm-zig-cc (zig 0.13.0)      ← кросс-компилятор ARMv6
-│   ├── clang-17 / clangd-17          ← host тесты + LSP
+│   ├── arm-zig-cc (zig 0.13.0)       ← кросс-компилятор ARMv6
+│   ├── clang-17 / clangd-17           ← host тесты + LSP
 │   ├── clang-format-17 / clang-tidy-17
-│   ├── gdb-multiarch                 ← remote debug
+│   ├── gdb-multiarch                  ← remote debug
 │   ├── cmake 3.28 / ninja
 │   ├── just 1.36
-│   └── /opt/vc                       ← Pi sysroot (DispmanX, bcm_host)
+│   └── /opt/vc / usr/                 ← Pi sysroot (DispmanX, libpng16)
 │
 └── Raspberry Pi Zero W (ARM1176JZF-S, ARMv6ZK)
-    ├── Buster Lite + systemd
+    ├── Debian Buster Lite + systemd
     ├── SSH ←───── хост
     ├── gdbserver (порт 3333)
-    └── /dev/ttyAMA0 ←── STM32
+    ├── /dev/ttyAMA0 ←── STM32 (115200 8N1)
+    └── /data/ ← writable data directory (bind mount source)
 ```
 
-### Контексты: строгое правило
-
-| Контекст | Что можно делать |
-|---|---|
-| Devcontainer | `just build::*` — компиляция, тесты, форматирование |
-| Хост | `just pi::*` — деплой, SSH, управление сервисами |
-| Хост | `just ship` — docker run build + deploy |
-
-### Типичная сессия разработки
-
-```bash
-# ── Devcontainer ──────────────────────────────────────────────
-just build::test          # тесты зелёные?
-just build::pi            # собирается под Pi?
-
-# ── Хост ──────────────────────────────────────────────────────
-just pi::deploy-bin       # быстрый деплой бинарей
-just pi::restart          # перезапустить сервис
-just pi::logs             # смотреть логи в реальном времени
-just pi::smoke            # финальная проверка
-```
+**Правило контекстов:** кросс-компиляция только в devcontainer; деплой и SSH только с хоста.
 
 ### Remote GDB
 
 ```bash
-# 1. Собрать debug (devcontainer):
-just build::pi-debug
-
-# 2. Задеплоить (хост):
-just pi::deploy-debug
-
-# 3. Запустить туннель (хост, отдельный терминал):
-just pi::gdbserver-start
-
-# 4. VSCode → F5 → "🐛 Debug: indicator (Pi Zero W)"
+just build::pi-debug          # devcontainer
+just pi::deploy-debug         # хост
+just pi::gdbserver-start      # хост, отдельный терминал (туннель висит)
+# VSCode → F5 → "🐛 Debug: indicator (Pi Zero W)"
 ```
 
-GDB подключается через `host.docker.internal:3333`
-(SSH-туннель `localhost:3333 → Pi:3333`, открыт `gdbserver-start`).
+GDB подключается через `host.docker.internal:3333` → SSH-туннель → Pi:3333 → gdbserver.
 
 ---
 
 ## 8. Тестирование
 
-### Host unit-тесты (Unity, на хосте, с ASan+UBSan)
+### Host unit-тесты (Unity, clang-17, ASan+UBSan)
 
 | Файл | Покрытие |
 |---|---|
-| `test_parser.c` | CRC-16 корректный/некорректный; parse_frame (SOF/EOF/size/opcode); parse_payload (валидный, токены, пустые, enum bounds); mode_is_valid() |
-| `test_floor.c` | 1–9; 10–64; П; П1–П9; −1..−9; нестандартные → -1; граничные значения |
-| `test_state.c` | Первый фрейм → события; идентичный → 0; частичные изменения; edge-triggered sound |
-| `test_sound_map.c` | DING этажи 1/5/25/40/П; UP с музыкой и без; OVERLOAD; FIRE_ALARM; NONE → valid=false |
-| `test_config.c` | Корректный TOML; файл не найден → дефолты; частичный TOML; комментарии; неизвестный ключ |
+| `test_parser.c` | CRC-16 корректный/некорректный; byte order (little-endian, регрессия P-18); parse\_frame (SOF/EOF/size/opcode); parse\_payload; parse\_dispatch; mode\_is\_valid() |
+| `test_floor.c` | 1–9; 10–64; П/CHAR\_PI\_CYR(17)/CHAR\_pi\_cyr(19); П1–П9; −1..−9; нестандартные; L=19 R=5 (реальный трафик) |
+| `test_state.c` | Первый фрейм → события; идентичный → 0; частичные изменения; edge-triggered sound; state\_apply\_dispatch |
+| `test_sound_map.c` | DING этажи 1–49 (все диапазоны); П, П1-П9; −1..−9; UP с music; CLOSING, OPENING; FIRE\_ALARM→fire.wav; BUTTON→button.wav; DONT\_WORK→g\_double.wav; NONE→valid=false |
+| `test_config.c` | nku\_scheme.toml; video.toml (full/missing/partial); renderer.toml; uart\_config (valid/defaults/port\_list); массивы в одну строку (P-31 регрессия); всего 21+ тест-кейс |
+| `test_uart.c` | valid frame через pipe(); junk перед SOF; bad CRC; partial frame; два фрейма подряд; tearDown cleanup (P-19 регрессия) |
 
-### On-target smoke test (`just pi::smoke`)
+**Запуск:** `just build::test` → `ctest --output-on-failure` (6 суитов, ASan+UBSan чисто)
 
-Проверяет: сервисы запущены, бинари существуют, конфиг есть, видеофайл есть, /dev/ttyAMA0 доступен, hifiberry видна в ALSA.
+### On-target валидация
+
+| Скрипт / команда | Что проверяет |
+|---|---|
+| `just pi::smoke` | Сервисы active, бинари существуют, /data/pi\_nku\_configs/ доступен, /dev/serial0 открывается, ALSA видит звуковую карту |
+| `just pi::check-resources` | 79 файлов: PNG, WAV, конфиги, bind-монты, writable /data |
+| `just pi::test-audio` | aplay тестового WAV через ALSA |
+| `just pi::test-video` | omxplayer тестового mp4 |
+| `just pi::dump` | uart\_rx\_dump на реальном трафике STM32 |
 
 ### CI pipeline (`just ci::pipeline`)
 
-```yaml
-# GitHub Actions: хост-сборка без Pi
-steps:
-  - just ci::check-format
-  - just ci::test          # host unit-тесты с ASan+UBSan
+```
+format-check → host unit-тесты (6 суитов, ASan+UBSan) → exit 0
 ```
 
 ---
@@ -436,32 +504,55 @@ steps:
 ## 9. Файлы на устройстве
 
 ```
-/home/pi/indicator/
-├── indicator             ← главный демон
-├── media_ingest          ← USB демон
-├── config_utility        ← Rust (без изменений)
-├── rpi_menu              ← Rust TUI (без изменений)
-├── scripts/
-│   └── smoke_test.sh
-├── configs/device/
-│   └── nku_scheme.toml   ← конфигурация (TOML, не pizero.ini)
-├── videos/
-│   └── output.mp4
-├── resources/
+/home/pi/indicator/             ← PI_DIR (будет read-only в Deploy v2)
+├── indicator                   ← C-демон
+├── media_ingest                ← USB демон (stub сейчас)
+├── pi_nku_sync                 ← Rust (sync MCU конфига)
+├── pi_nku_menu                 ← Rust TUI (редактирование параметров)
+├── pi_nku_configs/             ← bind mount → /data/pi_nku_configs/
+│   ├── nku_scheme.toml         ← звук, музыка, грузоподъёмность
+│   ├── pi_scheme.toml          ← UART port + baudrate
+│   ├── video.toml              ← параметры окна omxplayer
+│   ├── renderer.toml           ← позиции слотов, resources_dir
+│   └── menu_style.toml
+├── resources/                  ← bind mount → /data/resources/
 │   ├── BACK.png
-│   ├── chars/            ← 0.png … 37.png
-│   ├── arrows/           ← up.png, down.png
-│   ├── modes/            ← firealarm.png, overload.png, calling.png, talking.png
-│   ├── weights/          ← load_0.png … load_15.png
-│   └── notifications/    ← 0.png … 3.png
-└── sounds/
-    ├── 1.wav … 20.wav, 30.wav, 40.wav
-    ├── 20-.wav, 30-.wav
-    ├── floor.wav, podval.wav, minus.wav
-    ├── up.wav, down.wav, overload.wav
-    ├── closing.wav, opening.wav        ← TODO: подтвердить наличие (В-02)
-    ├── g_single.wav, g_double.wav, g_triple.wav  ← TODO: уточнить маппинг (В-01, В-03)
-    └── mus1.wav … mus7.wav
+│   ├── chars/                  ← 0.png … 37.png (char_code_t)
+│   ├── arrows/                 ← up.png, down.png
+│   ├── modes/                  ← firealarm/malfunction/loading/overload/seismo/
+│   │                              fireman/inspection/evacuation/calling/talking.png
+│   ├── weights/                ← load_0.png … load_15.png
+│   └── notifications/          ← Фаза 7
+├── sounds/                     ← bind mount → /data/sounds/
+│   ├── 0.wav … 19.wav, 20.wav, 20-.wav, 30.wav, 30-.wav, 40.wav, 40-.wav
+│   ├── floor.wav, podval.wav, minus.wav
+│   ├── up.wav, down.wav
+│   ├── closing.wav, opening.wav
+│   ├── overload.wav, fire.wav
+│   ├── g_single.wav, g_double.wav, g_triple.wav
+│   ├── button.wav
+│   └── mus1.wav … mus7.wav
+├── videos/                     ← bind mount → /data/videos/
+│   └── output.mp4
+├── splash/
+│   └── splash.jpg              ← boot splash
+├── scripts/
+│   ├── run_setup.sh
+│   ├── first_boot.sh
+│   ├── smoke_test.sh
+│   └── check_resources.sh
+└── tools/
+    ├── uart_rx_dump
+    └── MUp-rpi0
+
+/data/                          ← writable data (сейчас dir; Deploy v2 → ext4 раздел)
+├── first_boot_done             ← флаг первого старта
+├── setup_status                ← ok | pull_failed | push_failed | pending
+├── pi_nku_configs/
+├── resources/
+├── sounds/
+└── videos/
+    └── output.mp4
 ```
 
 ---
@@ -473,148 +564,205 @@ steps:
 **Итог:** Pi готова (Buster Lite), Docker-образ собран (Ubuntu 22.04 + LLVM 17 + zig 0.13.0),
 кросс-компиляция ARM stub работает, rsync деплой работает.
 
-**Проблемы решены:**
-- P-01: созданы stub-файлы для CMake
-- P-02/P-03: `build/` переведён с named volume на bind mount
-- P-04: `CMAKE_RUNTIME_OUTPUT_DIRECTORY` → все бинари плоско в `build/pi/`
-- P-05: создана `deploy/` с `.service`/`.target` файлами
-- P-06: `just ship` только с хоста (запускает docker run внутри)
-- P-07: Raspbian Buster репозитории перенесены в архив → fix в setup_pi.sh
+P-01..P-07: CMake stubs, bind mount, RuntimeOutputDirectory, deploy/, ship, Buster архив.
 
 ---
 
 ### Фаза 1 — Domain-слой и тесты ✅ ЗАКРЫТА
 
-**Итог:** бизнес-логика написана, 5/5 тестов зелёных, ASan+UBSan чисто, remote GDB работает.
+**Итог:** бизнес-логика написана (parser, floor, state, sound\_map, config); 5/5 тестов; ASan+UBSan чисты; remote GDB работает.
 
-**Уточнения протокола, полученные в фазе:**
-- Устройство — Pi Zero W (ARMv6), не 2W; компилятор заменён на zig cc
-- Протокол — бинарный фрейм с CRC-16 (см. §12)
-- `s_code_t` расширен до 9 значений (включая CLOSING, OPENING, FIRE_ALARM, DONT_WORK, BUTTON)
-- `el_mode_t` — разрывный диапазон (0–9, 100, 101, 255); проверка через `mode_is_valid()`
-- Конфиг — только `nku_scheme.toml` (TOML), pizero.ini — legacy
-
-**Проблемы решены:**
-- P-08: GLIBC_2.34 mismatch → zig cc
-- P-09: Segfault до main() на ARMv6 → `-marm -mfloat-abi=hard`, `arm1176jzf_s`
-- P-10: Docker arm64/x86 проблемы → Ubuntu 22.04
-- P-11: ASan runtime → `libclang-rt-17-dev`
-- P-12: стale CMakeCache → `rm -rf build/pi` перед configure
-- P-13: clangd красные заголовки → `src/` использует `build/host/compile_commands.json`
-- P-14: GDB timeout → `host.docker.internal:3333`
-- P-15: SSH UseKeychain → patch в postCreateCommand
-- P-16: `cppdbg` требует `ms-vscode.cpptools`, не `cortex-debug`
-- P-17: multiple definition of main → отдельный executable на каждый test_*.c
+P-08..P-17: glibc 2.34 → zig cc; ARMv6 segfault → `-marm`; docker arm64; ASan runtime; stale CMakeCache; clangd; GDB; SSH UseKeychain; vscode cppdbg; multiple main().
 
 ---
 
-### Фаза 2 — UART transport + event loop 🚧 В РАБОТЕ
+### Фаза 2 — UART transport + event loop ✅ ЗАКРЫТА
 
-**Цель:** демон читает UART от STM32, парсит бинарные фреймы, логирует события.
+**Итог:** демон читает бинарные фреймы от STM32 через UART; парсит dispatch (opcode=0xAA) и elevator (opcode=0xDA); логирует события; стабильный lifecycle под systemd; 6/6 тестов зелёных.
 
-- [ ] `src/transport/uart.c/.h`
-  - termios: 115200 baud, 8-bit, no parity, 1 stop bit, raw mode
-  - Сборка бинарного фрейма: ожидание SOF `0xAA`, чтение size, накопление data+CRC
-  - `frame_ready_cb_t` — коллбэк при полном фрейме
-  - Без malloc, без глобального состояния
-- [ ] `src/main.c` — poll-цикл
-  - `poll()` на uart_fd + signalfd + timerfd
-  - signalfd для SIGTERM / SIGINT / SIGCHLD
-  - timerfd: heartbeat раз в 30 с (лог статистики)
-  - Логирование через syslog: ERROR / WARN / INFO / DEBUG
-- [ ] Кросс-компиляция + деплой + проверка `just pi::logs`
+**Ключевые решения:**
+- poll-цикл: uart\_fd + signalfd + timerfd (watchdog 30 с)
+- Dispatch opcode 0xAA: CALL/ANSWER/OFF — приоритет выше mode из 0xDA
+- Service opcode 0xC0: пустой payload, LOG\_DEBUG, игнорируется
+- CHAR\_pi\_cyr=19 (строчная «п») — тоже подвальный этаж
 
-**Критерий:** в `journalctl -u indicator -f` виден каждый фрейм от STM32
-с распаршенными полями (floor, direction, mode, sound).
-
-**Открытые вопросы для этой фазы:**
-- В-04: подтвердить UART параметры на реальном трафике (115200, no parity, 8N1)
-- Проверить корректность CRC-16 на живых фреймах от STM32
+P-18: CRC byte order — STM32 шлёт little-endian (LO first, HI second).
+P-19: test\_uart утечка через Unity longjmp → tearDown().
+P-20: опечатка `inndicator_mode_t`.
+P-21: `cfmakeraw()` / `O_CLOEXEC` без `_GNU_SOURCE` → явные termios + fcntl.
+P-22: clangd + `_GNU_SOURCE` → явный `#define _GNU_SOURCE` первой строкой main.c.
+P-23: stale CMakeCache при запуске с хоста → `rm -rf build/pi` перед configure.
 
 ---
 
-### Фаза 3 — Video player (1–2 дня)
+### Фаза 3 — Video player ✅ ЗАКРЫТА
 
-**Цель:** omxplayer под надзором демона, автоперезапуск при падении.
+**Итог:** omxplayer под надзором indicator; автоперезапуск < 1 с при падении; параметры окна из video.toml; 14/14 тестов.
 
-- [ ] `src/player/video_player.c/.h`
-  - `posix_spawn` omxplayer (`--layer 1 --no-keys --loop --no-osd --win 0,0,600,1024`)
-  - Отслеживание PID
-  - `video_player_check_and_restart()` через SIGCHLD + signalfd
-- [ ] Проверка: `kill <omxplayer_pid>` → демон перезапускает за < 3 с
+**Ключевые решения:**
+- `posix_spawnp` + `POSIX_SPAWN_SETPGROUP` → отдельная process group
+- `killpg(pgid, SIGKILL)` в `video_player_close` (SIGTERM не работает для bash-обёртки)
+- `KillMode=control-group` → systemd убивает dbus-daemon через cgroup
 
----
-
-### Фаза 4 — DispmanX renderer (3–4 дня)
-
-**Цель:** видео + оверлеи работают; полный цикл STM32 → экран.
-
-- [ ] `src/renderer/renderer.h` — интерфейс: `show_sprite_png`, `show_sprite_buffer`, `hide_sprite`
-- [ ] `platform/dispmanx/renderer_impl.c/.h`
-  - Инициализация display handle
-  - 7 слотов с позициями из конфига
-  - fast_update для DIGIT_LEFT/RIGHT и ARROW
-  - destroy+recreate для WEIGHT, MODE, NOTIFICATION, BACKGROUND
-- [ ] null-renderer (stub) для интеграционных тестов на хосте
-- [ ] init renderer в `main.c` → BACKGROUND + WEIGHT на старте
-- [ ] Обработка всех `state_update_result_t` → вызовы renderer
-
-**Критерий:** все состояния от STM32 корректно отображаются. Latency UART → экран < 100 мс.
+P-24: dbus-daemon вне pgroup omxplayer → `Failed with result 'timeout'` (косметика; не блокирует). **Исправить в Deploy v2.**
+P-25: SIGTERM не убивает bash-обёртку omxplayer → SIGKILL.
+P-26: каскадные рестарты при `pkill -f omxplayer.bin` — ожидаемое поведение watchdog.
 
 ---
 
-### Фаза 5 — Audio player (2–3 дня)
+### Фаза 4 — DispmanX renderer ✅ ЗАКРЫТА
 
-**Цель:** аудио через aplay, приоритетная очередь, posix_spawn вместо system().
+**Итог:** все 6 слотов (BACKGROUND, MODE, WEIGHT, DIGIT\_LEFT, DIGIT\_RIGHT, ARROW) отображаются корректно поверх видео; latency UART → экран 88–158 мс; 14/14 тестов.
 
-- [ ] `src/audio/audio.c/.h`
-  - pthread + mutex + condvar
-  - Кольцевая очередь depth=3 с приоритетами
-  - `posix_spawn("aplay", file)` + waitpid
-  - `kill(pid, SIGTERM)` при вытеснении
-- [ ] `amixer sset 'PCM' N%` при инициализации (из config)
-- [ ] Проверка: DING прерывает музыку, CRITICAL прерывает DING
+**Ключевые решения:**
+- fast\_update для DIGIT\_LEFT/RIGHT: `changeSourceImageLayer` без пересоздания
+- `renderer_keepalive()` — пустой DispmanX update каждые 30 с (watchdog tick)
+- `renderer_config_load()` — позиции слотов и resources\_dir из renderer.toml
+- `libpng16.so` (динамическая) — не `.a` (ARMv7 static → SIGSEGV на ARMv6)
 
-**Критерий:** latency UART → начало звука < 100 мс. Приоритеты работают корректно.
+P-27: `libpng16.a` ARMv7 → segfault до main() → динамическая `.so` с Pi.
+P-28: VideoCore IV засыпает при простое → `renderer_keepalive()` каждые 30 с.
+P-29: ARROW slow path (destroy+recreate при каждом появлении) — не блокирует. **Исправить в Deploy v2.**
 
----
+**Latency (on-target):**
 
-### Фаза 6 — systemd + lifecycle (1–2 дня)
-
-**Цель:** корректный запуск с нуля, supervision, логи в journald.
-
-- [ ] Все `.service` файлы в `deploy/` (включая `indicator-setup.service`)
-- [ ] `indicator.target` → autostart через `multi-user.target`
-- [ ] Проверка: power on → система работает через N секунд (замерить)
-- [ ] Проверка: `systemctl kill indicator` → перезапуск за 2 с
+| Операция | Время |
+|---|---|
+| UART frame → first digit update | 45–63 мс |
+| UART frame → both digits updated | 88–158 мс |
+| Arrow creation (slow path) | ~48 мс |
+| keepalive null update | ~1 мс |
 
 ---
 
-### Фаза 7 — Media ingest (3–4 дня)
+### Фаза 5 — Audio player ✅ ЗАКРЫТА
+
+**Итог:** аудио через aplay с приоритетной очередью; фоновая музыка; amixer volume control; latency UART → начало звука < 100 мс.
+
+**Реализовано:**
+- `audio_player_t` — pthread + mutex + condvar
+- Приоритетная очередь depth=3: CRITICAL(0) > FLOOR(1) > MOVEMENT(2) > MUSIC(3)
+- effective\_prio = min(current, min\_queue) — корректное вытеснение без потери DING
+- `posix_spawnp("aplay")` + waitpid; SIGTERM при вытеснении
+- amixer lazy volume: меняется только при переходе sound\_vol ↔ music\_vol
+- Фоновая музыка: mus1..mus7.wav по кругу; music\_wanted=1 после UP/DOWN
+- Подавление музыки при MODE\_ABNORMAL и при активном dispatch
+- `needs_music=0` если нештатный режим — up.wav играет, музыка не запускается
+
+---
+
+### Фаза Deploy ✅ ЗАКРЫТА
+
+**Итог:** корректная файловая структура на устройстве, bind-монты, systemd-оркестрация, uart\_config\_load(), setup\_status, indicator-firstboot.service; 21/21 тестов.
+
+**Ключевые решения:**
+- `/data/` layout + bind-монты в `/etc/fstab`
+- `indicator-setup.service` [oneshot, RemainAfterExit=yes, TTYPath=/dev/tty1]
+- `indicator-firstboot.service` [ConditionPathExists=!/data/first\_boot\_done]
+- `uart_config_load()` из `pi_scheme.toml` (port, baudrate)
+- `setup_status` читается из `/data/setup_status` при старте indicator
+
+P-30: rsync не сохраняет +x → `chmod +x scripts/*.sh` после rsync.
+P-31: однострочные TOML-массивы `[...]` ломали парсер → проверка закрывающей `]` на той же строке.
+
+---
+
+### Phase Deploy Addendum ✅ ЗАКРЫТА
+
+**Итог:** boot splash (fbi), подавление артефактов ядра на tty1.
+
+**Ключевые решения:**
+- `/boot/cmdline.txt`: `console=tty3 quiet loglevel=3` — ядро молчит на tty1
+- `run_setup.sh`: `printf '\033[2J\033[H' > /dev/tty1` → чистый экран перед TUI
+- fbi splash.jpg (3 сек) в начале `run_setup.sh`, sudoers для `pi → fbi`
+- Plymouth не установлен; GPU bootloader не поддерживает splash на этой прошивке
+
+---
+
+### Фаза 6 — Deploy v2 🔄 В РАБОТЕ
+
+**Цель:** надёжность производственного устройства, read-only rootfs, воспроизводимый образ.
+
+#### Блок 1 — Рефакторинг main.c (средний приоритет)
+
+- [ ] Выделить `src/app/render_dispatch.c/.h`: `mode_to_rel_path`, `renderer_apply_mode`, `renderer_apply_dispatch`, `renderer_apply_elevator`
+- [ ] Выделить `src/app/uart_handler.c/.h`: `on_uart_frame`, `maybe_clear_mcu_notification`
+- [ ] Результат: main.c ~300 строк (только poll loop + init + cleanup)
+
+#### Блок 2 — P-24: dbus-daemon (низкий приоритет)
+
+- [ ] Попробовать `--no-dbus` флаг omxplayer (вариант A, низкая сложность)
+- [ ] Если не поддерживается: `ExecStopPost=pkill -KILL -f dbus-daemon` (вариант B)
+- [ ] Убрать `Failed with result 'timeout'` из статуса сервиса
+
+#### Блок 3 — P-29: ARROW slow path (низкий приоритет)
+
+- [ ] `renderer_hide()`: скрывать через `ELEMENT_CHANGE_OPACITY=0` вместо `destroyImageLayer`
+- [ ] `renderer_show_png()`: fast\_update если size совпадает
+- [ ] Проверка: в логах `slot fast-updated` вместо `slot created` для стрелки
+
+#### Блок 4 — overlayroot (read-only rootfs)
+
+- [ ] `apt-get install overlayroot`
+- [ ] `/etc/overlayroot.conf`: `overlayroot="tmpfs"`
+- [ ] Убедиться что bind-монты из fstab отрабатывают при overlayroot
+- [ ] Убедиться что `/tmp`, `/run`, `/data` writable
+
+#### Блок 5 — 3-раздельная схема SD-карты
+
+- [ ] `fdisk`: создать `/dev/mmcblk0p3` (ext4, ~9 GB, label=data)
+- [ ] fstab: `LABEL=data /data ext4 defaults,noatime 0 2`
+- [ ] `setup_pi.sh`: проверять `mountpoint -q /data` вместо `mkdir -p /data`
+
+#### Блок 6 — `build_image.sh`
+
+- [ ] Скачать Buster Lite .img.xz (зафиксированный URL + sha256)
+- [ ] Расширить образ, создать p3 (ext4)
+- [ ] `chroot + qemu-arm-static`: запуск `setup_pi.sh`, деплой всего, overlayroot ON
+- [ ] Сжать: `zstd` → `.img.zst` + SHA256
+- [ ] `just image [VERSION]` → `release/indicator-vX.Y.Z.img.zst`
+
+#### Блок 7 — Производственный pipeline
+
+- [ ] Инструкция: balenaEtcher → flash → insert → wait 90 s → ready
+- [ ] Хранилище образов: NAS / S3-совместимое
+
+#### Блок 8 — factory-test
+
+- [ ] `just pi::factory-test`: indicator active, setup ok, UART открывается, omxplayer жив, /data writable, rootfs read-only, VERSION file есть, bind-монты активны
+
+**Зависимости:** Блок 4 → 5 → 6 → 7. Блоки 1–3 независимы.
+**Минимум для производства:** Блоки 4 → 5 → 6 → 7.
+
+---
+
+### Фаза 7 — Media ingest ⏳ ОЖИДАЕТ
 
 **Цель:** USB-флешка заменяет видео, уведомления на экране.
 
-- [ ] `src_media_ingest/` полностью
-  - inotify на /dev (IN_CREATE / IN_DELETE)
+- [ ] `src_media_ingest/` полностью:
+  - inotify на /dev (IN\_CREATE / IN\_DELETE)
   - mount с fallback: /dev/sdX1 → /dev/sdX
   - Поиск .mp4, ffmpeg concat
   - `rename()` для атомарной замены
   - Запись статуса в FIFO
-- [ ] `src/media/media_ipc.c/.h` в главном демоне
-- [ ] SPRITE_NOTIFICATION через renderer при каждом статусе
-- [ ] `video_player_replace()` после MEDIA_STATUS_DONE
+- [ ] `src/media/media_ipc.c/.h` — чтение из FIFO в главном демоне
+- [ ] `SPRITE_NOTIFICATION` через renderer при каждом статусе
+- [ ] `FD_FIFO` в poll-цикле main.c (заглушка `/* Фаза 7 */` уже есть)
+- [ ] `video_player_replace()` после `MEDIA_STATUS_DONE`
+- [ ] `media-ingest.service` — реальный сервис (не stub)
 
 **Критерий:** полный цикл USB работает; уведомления отображаются; видео заменяется.
 
 ---
 
-### Фаза 8 — Font renderer (после стабилизации Фазы 4)
+### Фаза 8 — Font renderer (low priority, опционально)
 
-**Цель:** цифры этажа через растеризацию глифов, без PNG.
+**Цель:** цифры этажа через растеризацию глифов, без PNG для chars/.
 
-- [ ] Перенести font-renderer в `src/font/` или `platform/font/`
-- [ ] Адаптер: `font_render_to_rgba(char_code, w, h, rgba_buf)`
-- [ ] Переключить DIGIT_LEFT/RIGHT на `renderer_show_sprite_buffer()`
+- [ ] Перенести font-renderer в `src/font/`
+- [ ] `font_render_to_rgba(char_code, w, h, rgba_buf)`
+- [ ] Переключить DIGIT\_LEFT/RIGHT на `renderer_show_sprite_buffer()`
 - [ ] Убрать зависимость от `resources/chars/*.png`
 
 ---
@@ -623,7 +771,7 @@ steps:
 
 - [ ] `docs/UART_PROTOCOL.md` — финальная спецификация протокола
 - [ ] `docs/ARCHITECTURE.md` — финальная архитектура
-- [ ] GitHub Actions CI: `just ci::pipeline`
+- [ ] GitHub Actions CI: `just ci::pipeline` в `.github/workflows/`
 - [ ] Финальные замеры latency (UART → экран, UART → звук)
 - [ ] Ревью логов: достаточно ли информации для диагностики в поле?
 
@@ -631,12 +779,13 @@ steps:
 
 ## 11. Что не переписываем
 
-| Файл | Действие |
+| Компонент | Действие |
 |---|---|
-| `config_utility` (Rust) | Без изменений |
-| `rpi_menu` (Rust TUI) | Без изменений |
-| Andrew Duncan layers | → `platform/dispmanx/layers/` |
+| `pi_nku_sync` (Rust) | Без изменений; pre-built в `deploy/bin/` |
+| `pi_nku_menu` (Rust TUI) | Без изменений; pre-built в `deploy/bin/` |
+| Andrew Duncan layers | → `platform/dispmanx/layers/`; clang-tidy отключён |
 | `nku_scheme.toml` | Без изменений (читаем, не генерируем) |
+| MUp-rpi0 | Диагностический бинарь STM32; в `deploy/tools/` |
 
 ---
 
@@ -646,124 +795,135 @@ steps:
 
 ```
 ┌──────┬──────┬────────┬──────────────────────┬──────────┬──────────┬──────┐
-│ SOF  │ SIZE │ OPCODE │        DATA          │  CRC_HI  │  CRC_LO  │ EOF  │
+│ SOF  │ SIZE │ OPCODE │        DATA          │  CRC_LO  │  CRC_HI  │ EOF  │
 │ 0xAA │  1B  │   1B   │     SIZE байт        │    1B    │    1B    │ 0xBB │
 └──────┴──────┴────────┴──────────────────────┴──────────┴──────────┴──────┘
 
 SOF    = 0xAA           (Start of Frame)
 SIZE   = длина DATA в байтах
-OPCODE = 0xDA           (индикаторные данные)
-DATA   = текстовый payload (см. 12.2)
-CRC    = CRC-16/CCITT-FALSE по полю DATA
+OPCODE — см. 12.2
+DATA   = текстовый payload
+CRC    = CRC-16/CCITT-FALSE по DATA; **little-endian** (LO first, HI second)
 EOF    = 0xBB           (End of Frame)
 ```
 
-**Примечание:** CRC считается только по DATA, без SOF/SIZE/OPCODE/EOF.
+⚠️ **CRC byte order — критично:** STM32 (`MU_tx_frame_create`) записывает `[CRC_LO][CRC_HI]`.
+Было ошибочно задокументировано как big-endian. Исправлено в P-18 (Фаза 2).
 
-### 12.2 Текстовый payload (opcode=0xDA)
+### 12.2 Opcodes
+
+| Opcode | Название | Payload | Обработка |
+|---|---|---|---|
+| `0xDA` | `MU_OPCODE_ELEVATOR_STATUS` | `#STM:L…:R…:A…:S…:M…:E#\r\n\0` | Основные данные лифта |
+| `0xAA` | `MU_OPCODE_DISPATCH` | `DISPATCH CALL\r\n` / `DISPATCH ANSWER\r\n` / `DISPATCH OFF\r\n` | Диспетчерская связь |
+| `0xC0` | служебный | пустой (len=0) | LOG\_DEBUG, игнорируется |
+
+**Примечание по opcode=0xAA:** совпадает с SOF-байтом, но занимает разную позицию в кадре (byte[2] = OPCODE), парсер работает корректно.
+
+**Dispatch приоритет:** dispatch активен → MODE-слот показывает dispatch-иконку (CALL/ANSWER), не mode из 0xDA. При `DISPATCH_OFF` — восстанавливается mode из последнего 0xDA.
+
+STM32 отправляет фреймы **только при изменении** (edge-triggered). Payload заканчивается `\r\n\0`; null-байт включён в `data_len`.
+
+### 12.3 Payload opcode=0xDA
 
 ```
-#STM:L<val>:R<val>:A<val>:S<val>:M<val>:E#\r\n
+#STM:L<val>:R<val>:A<val>:S<val>:M<val>:E#\r\n\0
 
-Поле  Токен  Описание
-L     2      left_char  — код левого символа дисплея
-R     3      right_char — код правого символа дисплея
-A     4      arrows_state_t
-S     5      s_code_t (звук)
-M     6      el_mode_t (режим)
+L — left_char  (char_code_t)
+R — right_char (char_code_t)
+A — arrow_t
+S — sound_t (edge-triggered: ненулевое значение ровно 1 фрейм)
+M — indicator_mode_t
 ```
 
-STM32 отправляет фреймы **только при изменении состояния** (edge-triggered, не polling).
-Звук — тоже edge-triggered: ненулевое значение один раз как событие.
-
-### 12.3 Коды символов (left_char / right_char)
+### 12.4 Коды символов (char\_code\_t)
 
 | Код | Символ | Значение |
 |-----|--------|----------|
 | 0–9 | `'0'`–`'9'` | Цифра |
-| 16  | ` ` (пробел) | Пустая позиция |
-| 17  | `П` | Подвал |
-| 22  | `-` | Минус |
+| 16 | ` ` (CHAR\_BLANK) | Пустая позиция |
+| 17 | `П` (CHAR\_PI\_CYR) | Подвал (заглавная) |
+| 19 | `п` (CHAR\_pi\_cyr) | Подвал (строчная, тоже декодируется как basement) |
+| 22 | `-` (CHAR\_MINUS) | Минус |
 
-### 12.4 Декодирование этажа (floor_decode)
+Полный список кодов: CHAR\_A(10)..CHAR\_T(37) — символы латиницы и кириллицы; `CHAR_CODE_MAX=37`.
 
-| left | right | Результат |
-|------|-------|-----------|
-| 0–9 | 0–9 | двузначный этаж 10–64 |
-| 16 | 0–9 | однозначный этаж 1–9 |
-| 16 | 17 | П (подвал, код 70) |
-| 17 | 1–9 | П1–П9 (коды 71–79) |
-| 22 | 1–9 | −1..−9 (коды 81–89) |
-| иначе | | -1 (нестандартный) |
+### 12.5 Декодирование этажа (floor\_decode)
 
-### 12.5 arrows_state_t
+| left | right | Тип | Результат |
+|------|-------|-----|-----------|
+| 0–9 | 0–9 | NORMAL | двузначный этаж 10–64 |
+| BLANK | 1–9 | NORMAL | однозначный этаж 1–9 |
+| BLANK | BLANK | UNKNOWN | → g\_triple fallback |
+| PI\_CYR / pi\_cyr | BLANK | BASEMENT | П (подвал без номера) |
+| PI\_CYR / pi\_cyr | 1–9 | BASEMENT\_N | П1–П9 |
+| MINUS | 1–9 | NEGATIVE | −1..−9 |
+| 22 | 0 | UNKNOWN | `-0` → g\_triple |
+| 22 | BLANK | UNKNOWN | → g\_triple |
+| иначе | | UNKNOWN | → g\_single |
 
-```c
-typedef enum {
-    ARROWS_NONE = 0,
-    ARROWS_UP   = 1,
-    ARROWS_DOWN = 2,
-} arrows_state_t;
-```
-
-### 12.6 s_code_t (звук)
+### 12.6 arrow\_t
 
 ```c
-typedef enum {
-    SOUND_NONE       = 0,
-    SOUND_DING       = 1,   // анонс этажа
-    SOUND_UP         = 2,   // движение вверх
-    SOUND_DOWN       = 3,   // движение вниз
-    SOUND_CLOSING    = 4,   // двери закрываются
-    SOUND_OPENING    = 5,   // двери открываются
-    SOUND_OVERLOAD   = 6,   // перегрузка
-    SOUND_FIRE_ALARM = 7,   // пожарная тревога
-    SOUND_DONT_WORK  = 8,   // не работает
-    SOUND_BUTTON     = 9,   // нажатие кнопки
-} s_code_t;
+ARROW_NONE = 0   // нет стрелки
+ARROW_UP   = 1   // вверх
+ARROW_DOWN = 2   // вниз
+ARROW_BOTH = 3   // оба направления → скрыть (как NONE)
 ```
 
-**WAV-маппинг (частично уточнить — открытые вопросы В-01, В-02):**
+### 12.7 sound\_t (edge-triggered, S-поле в 0xDA)
 
-| s_code_t | WAV-файлы |
-|----------|-----------|
-| SOUND_DING | зависит от этажа (см. таблицу sound_map) |
-| SOUND_UP | `up.wav` |
-| SOUND_DOWN | `down.wav` |
-| SOUND_CLOSING | `closing.wav` (TODO: подтвердить В-02) |
-| SOUND_OPENING | `opening.wav` (TODO: подтвердить В-02) |
-| SOUND_OVERLOAD | `overload.wav` |
-| SOUND_FIRE_ALARM | `g_triple.wav` (TODO: уточнить В-01) |
-| SOUND_DONT_WORK | `g_double.wav` (TODO: уточнить В-01) |
-| SOUND_BUTTON | `g_single.wav` (TODO: уточнить В-01) |
+| sound\_t | WAV-файл(ы) | Приоритет |
+|----------|-------------|-----------|
+| SOUND\_DING | floor.wav + N.wav (см. §12.8) | AUDIO\_PRIO\_FLOOR |
+| SOUND\_UP | up.wav | AUDIO\_PRIO\_MOVEMENT |
+| SOUND\_DOWN | down.wav | AUDIO\_PRIO\_MOVEMENT |
+| SOUND\_CLOSING | closing.wav | AUDIO\_PRIO\_MOVEMENT |
+| SOUND\_OPENING | opening.wav | AUDIO\_PRIO\_MOVEMENT |
+| SOUND\_BUTTON | button.wav | AUDIO\_PRIO\_MOVEMENT |
+| SOUND\_OVERLOAD | overload.wav | AUDIO\_PRIO\_CRITICAL |
+| SOUND\_FIRE\_ALARM | fire.wav | AUDIO\_PRIO\_CRITICAL |
+| SOUND\_DONT\_WORK | g\_double.wav | AUDIO\_PRIO\_CRITICAL |
 
-**Логика DING (sound_map_resolve):**
-- Этаж 1–20 → `floor.wav` + `N.wav`
-- Этаж 21–40 → `floor.wav` + `20.wav` + `N.wav` (где N = остаток)
-- Этаж 30, 40 → `floor.wav` + `N.wav` (одно число)
-- Этаж П → `podval.wav`
-- Этаж П1–П9 → `podval.wav` + `N.wav`
-- Этаж −1..−9 → `minus.wav` + `N.wav`
-- `has_music=true` → добавить `mus<N>.wav` с пониженной громкостью
+### 12.8 Логика DING (sound\_map\_resolve → SOUND\_DING)
 
-### 12.7 el_mode_t (режим)
+| Этаж | WAV-последовательность |
+|---|---|
+| 1–20 | `N.wav` + `floor.wav` |
+| 21–29 | `20-.wav` + `ones.wav` + `floor.wav` |
+| 30 | `30.wav` + `floor.wav` |
+| 31–39 | `30-.wav` + `ones.wav` + `floor.wav` |
+| 40 | `40.wav` + `floor.wav` |
+| 41–49 | `40-.wav` + `ones.wav` + `floor.wav` |
+| > 49 | `g_triple.wav` (fallback) |
+| П | `podval.wav` + `floor.wav` |
+| П1–П9 | `N.wav` + `podval.wav` + `floor.wav` |
+| −1..−9 | `minus.wav` + `N.wav` + `floor.wav` |
+| UNKNOWN | `g_single.wav` |
 
-```c
-typedef enum {
-    MODE_NORMAL              = 0,
-    MODE_FIRE_ALARM          = 1,   // пожарная тревога
-    MODE_OVERLOAD            = 2,   // перегрузка
-    // ... значения 3–9 ...
-    MODE_UPS_MALFUNCTION     = 9,
-    MODE_DISPATCH_CALL       = 100, // вызов диспетчера
-    MODE_DISPATCH_ANSWER     = 101, // ответ диспетчера
-    MODE_CONN_LOST           = 255, // связь потеряна
-} el_mode_t;
-```
+**После UP/DOWN:** `needs_music=1` → worker запускает `mus<N>.wav` (циклически).
 
-**Диапазон разрывный.** Проверка валидности: `mode_is_valid()`, не `<= MAX`.
+### 12.9 indicator\_mode\_t (M-поле в 0xDA)
 
-### 12.8 Громкость (из nku_scheme.toml)
+| Значение | Константа | PNG |
+|---|---|---|
+| 0 | MODE\_NORMAL | — (скрыть слот) |
+| 1 | MODE\_FIRE\_ALARM | modes/firealarm.png |
+| 2 | MODE\_MALFUNCTION | modes/malfunction.png |
+| 3 | MODE\_LOADING | modes/loading.png |
+| 4 | MODE\_OVERLOAD | modes/overload.png |
+| 5 | MODE\_SEIS\_ALARM | modes/seismo.png |
+| 6 | MODE\_FIREMANS | modes/fireman.png |
+| 7 | MODE\_SERVICE | modes/inspection.png |
+| 8 | MODE\_EVACUATION | modes/evacuation.png |
+| 9 | MODE\_UPS\_MALFUNCTION | modes/malfunction.png |
+| 100 | MODE\_DISPATCH\_CALL | modes/calling.png (через dispatch) |
+| 101 | MODE\_DISPATCH\_ANSWER | modes/talking.png (через dispatch) |
+| 255 | MODE\_CONN\_LOST | — (скрыть слот) |
+
+Диапазон разрывный: `mode_is_valid()` вместо `<= MAX`.
+
+### 12.10 Громкость (из nku\_scheme.toml)
 
 ```toml
 [soundvolume]
@@ -775,16 +935,21 @@ possible_values = ["0%", "25%", "50%", "75%", "100%"]
 default = "0%"
 ```
 
-`sound_map_volume_percent()` переводит строки конфига в integer 0–100.
-`musicvolume = "0%"` → музыка не воспроизводится (`valid = false`).
+`musicvolume = "0%"` → музыка не воспроизводится (`needs_music` игнорируется, `music_vol_pct=0`).
 
 ---
 
 ## 13. Открытые вопросы
 
-| ID | Вопрос | Влияет на |
-|----|--------|-----------|
-| В-01 | Какие WAV для SOUND_FIRE_ALARM / DONT_WORK / BUTTON? | sound_map.c, тесты |
-| В-02 | Есть ли closing.wav и opening.wav в sounds/? | sound_map.c |
-| В-03 | Когда g_double / g_single — зависимость от контекста? | sound_map.c |
-| В-04 | Подтвердить UART параметры на реальном трафике с STM32 | uart.c |
+| ID | Вопрос | Статус | Влияет на |
+|----|--------|--------|-----------|
+| В-01 | WAV для FIRE\_ALARM / DONT\_WORK / BUTTON | ✅ ЗАКРЫТ: fire.wav / g\_double.wav / button.wav | sound\_map.c |
+| В-02 | Есть ли closing.wav и opening.wav | ✅ ЗАКРЫТ: оба файла подтверждены | sound\_map.c |
+| В-03 | g\_double / g\_single — контекст | ✅ ЗАКРЫТ: g\_single → UNKNOWN этаж; g\_double → SOUND\_DONT\_WORK | sound\_map.c |
+| В-04 | UART параметры | ✅ ЗАКРЫТ: 115200 baud / /dev/serial0 (= ttyAMA0) / 8N1 | uart.c |
+| В-05 | s\_close.wav, s\_open.wav — нужны? | ⏳ ОТКРЫТ: файлы есть в deploy/sounds/, в sound\_map не используются | очистка |
+| В-06 | g\_single.wav, g\_double.wav, g\_triple.wav — убрать из прямого деплоя? | ⏳ ОТКРЫТ: g\_triple используется как fallback для >49 и UNKNOWN | очистка |
+| В-07 | ARROW\_BOTH (=3) — специальная обработка? | ✅ ЗАКРЫТ: скрывать стрелку (как ARROW\_NONE) | renderer |
+| В-08 | P-24 dbus-daemon timeout — omxplayer --no-dbus? | ⏳ ОТКРЫТ: исследовать в Deploy v2 | Deploy v2 |
+| В-09 | Когда нужен indicator.target (multi-service группа)? | ⏳ ОТКРЫТ: нужен после реализации Фазы 7 (media-ingest) | Фаза 7 |
+| В-10 | TODO в dump: читать port/baud из pi\_scheme.toml динамически | ⏳ ОТКРЫТ: dump сейчас хардкодит /dev/ttyAMA0 115200 | pi.just |

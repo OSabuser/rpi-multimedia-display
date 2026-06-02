@@ -1,8 +1,9 @@
 # Архитектура рабочего окружения
 
 > Проект: Lift Indicator
-> Устройство: Raspberry Pi Zero W (ARM1176JZF-S, ARMv6, Debian Buster)
-> ssh-add --apple-use-keychain ~/.ssh/id_ed25519 - Добавить ключ в агент с сохранением в Keychain (--apple-use-keychain)
+> Устройство: Raspberry Pi Zero W Rev 1.1 (ARM1176JZF-S, ARMv6ZK, Debian Buster)
+> `ssh-add --apple-use-keychain ~/.ssh/id_ed25519` — добавить ключ в агент с сохранением в Keychain
+
 ---
 
 ## Концепция
@@ -40,13 +41,14 @@
 │   ├── gdb-multiarch            ← remote debug → Pi Zero W
 │   ├── cmake 3.28 / ninja
 │   ├── just
-│   └── /opt/vc                  ← Pi sysroot (DispmanX, bcm_host)
+│   └── /opt/vc + /usr/          ← Pi sysroot (DispmanX, bcm_host, libpng16, zlib)
 │
 └── Raspberry Pi Zero W  (indicator-01.local)
     ├── SSH ◄──────── хост (деплой, логи, GDB-туннель)
-    ├── /dev/ttyAMA0  ◄── UART от STM32
+    ├── /dev/ttyAMA0  ◄── UART от STM32 (115200 8N1)
     ├── gdbserver     ← remote debug (порт 3333)
-    └── DispmanX + omxplayer ← дисплей
+    ├── DispmanX + omxplayer ← дисплей
+    └── /data/        ← writable data (bind mount source)
 ```
 
 ---
@@ -87,6 +89,13 @@ Stage 2 (dev):       Ubuntu 22.04 + LLVM 17 + copy zig from stage 1
 Двухстадийность даёт кэширование: при обновлении clangd zig-слой не
 пересобирается. Оба стейджа arch-aware (x86_64 / aarch64).
 
+Sysroot (два шага, один раз):
+
+```bash
+just pi::fetch-sysroot       # /opt/vc с Pi → build-env/pi-sysroot/opt/vc/
+just pi::fetch-png-sysroot   # libpng16.so + headers → build-env/pi-sysroot/usr/
+```
+
 Сборка образа:
 
 ```bash
@@ -105,10 +114,8 @@ clangd настроен через `.clangd` в корне репо с трем�
 | `src/` | `build/host` | clang-17 x86/arm64 | LSP для domain-кода |
 | `platform/` | `build/pi` | arm-zig-cc | LSP для DispmanX |
 
-`src/` намеренно использует host compile_commands: domain-код платформонезависим,
-host clang знает все системные заголовки идеально. arm-zig-cc хранит
-системные заголовки внутри `/opt/zig/lib/libc/` — clangd их не находит
-без сложного query-driver.
+`src/` намеренно использует host compile\_commands: domain-код платформонезависим,
+host clang знает все системные заголовки идеально.
 
 `third_party/` и `platform/dispmanx/layers/` — clang-tidy отключён
 (vendored/legacy код).
@@ -147,31 +154,56 @@ just build::test-verbose  # с подробным выводом
 ```
 
 Компилятор: clang-17. Каждый `test_*.c` → отдельный исполняемый файл.
-5 тест-сьютов: `test_parser`, `test_floor`, `test_sound_map`, `test_state`, `test_config`.
+6 тест-суитов: `test_parser`, `test_floor`, `test_sound_map`, `test_state`, `test_config`, `test_uart`.
 
 ### Кросс-компиляция для Pi (в devcontainer)
 
 ```bash
-just build::pi       # Release: indicator + media_ingest
-just build::pi-debug # Debug: -g3 -O0 -fno-omit-frame-pointer
+just build::pi          # Release: indicator + media_ingest + uart_rx_dump
+just build::pi-debug    # Debug: -g3 -O0 -fno-omit-frame-pointer
+just build::pi-dump     # Только uart_rx_dump
+just build::pi-ingest   # Только media_ingest
 ```
 
 Компилятор: arm-zig-cc → ARMv6, hard-float, ARM32 mode.
-Результат: `build/pi/indicator`, `build/pi/media_ingest`.
+Результат: `build/pi/indicator`, `build/pi/media_ingest`, `build/pi/uart_rx_dump`.
 
 ### Полный цикл (с хоста)
 
 ```bash
-just ship   # docker run → just build::pi → just pi::deploy
+just ship   # docker run → just build::pi → just pi::deploy → check-resources → restart
 ```
 
 ---
 
 ## Деплой
 
+### Быстрый деплой (при разработке)
+
 ```bash
-just pi::deploy      # бинари + скрипты + systemd units
-just pi::deploy-bin  # только бинари (быстро, для итераций)
+just pi::deploy       # бинари + tools + Rust + скрипты + systemd + конфиги
+just pi::deploy-bin   # только C-бинари (indicator + media_ingest) — быстро для итераций
+just pi::restart      # перезапустить indicator.service
+```
+
+### Полный деплой (первая установка / обновление ресурсов)
+
+```bash
+just pi::deploy-full  # deploy + ресурсы + звуки + splash + видео
+```
+
+### Деплой по частям
+
+```bash
+just pi::deploy-systemd   # systemd units + daemon-reload
+just pi::deploy-configs   # TOML конфиги → /data/pi_nku_configs/
+just pi::deploy-resources # PNG ресурсы → /data/resources/
+just pi::deploy-sounds    # WAV файлы → /data/sounds/
+just pi::deploy-splash    # boot splash.jpg
+just pi::deploy-video     # output.mp4 → /data/videos/
+just pi::deploy-rust      # pi_nku_sync + pi_nku_menu
+just pi::deploy-tools     # uart_rx_dump + MUp-rpi0
+just pi::deploy-scripts   # run_setup.sh, first_boot.sh, smoke_test.sh, check_resources.sh
 ```
 
 Деплой использует rsync. Pi должна быть доступна по SSH-ключу.
@@ -236,15 +268,21 @@ timeout 3 bash -c 'echo > /dev/tcp/host.docker.internal/3333' && echo OK || echo
 ## Управление Pi
 
 ```bash
-just pi::ssh          # SSH на Pi
-just pi::logs         # journalctl -u indicator -f
-just pi::logs-ingest  # journalctl -u media-ingest -f
-just pi::status       # статус всех сервисов
-just pi::restart      # перезапустить indicator
-just pi::smoke        # smoke test после деплоя
-just pi::test-audio   # проверить аудио
-just pi::top          # CPU/RAM
-just pi::df           # место на SD-карте
+just pi::ssh              # SSH на Pi
+just pi::logs             # journalctl -u indicator -f
+just pi::logs-ingest      # journalctl -u media-ingest -f
+just pi::logs-tail [n]    # последние N строк обоих сервисов (default 50)
+just pi::status           # статус всех сервисов
+just pi::restart          # перезапустить indicator
+just pi::smoke            # smoke test после деплоя
+just pi::check-resources  # валидация 79 ресурсов, конфигов, bind-монтов
+just pi::test-audio       # проверить аудио (aplay тестового WAV)
+just pi::test-video       # ffmpeg test.mp4 → Pi → omxplayer
+just pi::dump             # uart_rx_dump (indicator стоп → слушать → поднять)
+just pi::dump-passive     # uart_rx_dump без остановки indicator
+just pi::top              # CPU/RAM
+just pi::df               # место на SD-карте
+just pi::backup-image /dev/diskN  # создать .img.gz
 ```
 
 ---
@@ -263,21 +301,26 @@ cp .env.example .env
 # Отредактировать: PI_HOST=indicator-01.local
 
 # 3. Первичная настройка (один раз):
-just pi::setup-ssh       # SSH-ключ → Pi
-just pi::fetch-sysroot   # /opt/vc с Pi → build-env/pi-sysroot/
-just pi::build-image     # собрать Docker-образ indicator-build
+just pi::setup-ssh           # SSH-ключ → Pi
+just pi::fetch-sysroot       # /opt/vc с Pi → build-env/pi-sysroot/
+just pi::fetch-png-sysroot   # libpng16.so + headers с Pi
+just pi::build-image         # собрать Docker-образ indicator-build
 
 # 4. VSCode → "Reopen in Container"
 #    postCreateCommand почистит macOS-специфичные SSH-опции автоматически
 
 # 5. В devcontainer:
-just build::test   # 5/5 тестов зелёных — всё в порядке
-just build::pi     # ARM32 бинарь собирается без ошибок
+just build::test   # 6/6 суитов зелёных — всё в порядке
+just build::pi     # ARM32 бинари собираются без ошибок
 
-# 6. С хоста:
-just pi::setup-pi  # пакеты, ALSA, директории на Pi (один раз)
-just pi::deploy    # rsync на Pi
-just pi::smoke     # финальная проверка
+# 6. С хоста (первичная настройка Pi):
+just pi::setup-pi      # пакеты, ALSA, /data layout, fstab bind-монты
+just pi::deploy-full   # все бинари + ресурсы + звуки + конфиги + видео
+just pi::enable-services  # systemctl enable для всех сервисов
+just pi::smoke         # финальная проверка
+
+# 7. При разработке (итерация):
+just ship              # build::pi → deploy → check-resources → restart
 ```
 
 ---
@@ -305,18 +348,57 @@ build/
 │   ├── test_floor
 │   ├── test_sound_map
 │   ├── test_state
-│   └── test_config
+│   ├── test_config
+│   └── test_uart
 │
 └── pi/                      ← Pi бинари (arm-zig-cc, ARMv6)
     ├── compile_commands.json   ← используется clangd для platform/
-    ├── indicator
-    └── media_ingest
+    ├── indicator               ← главный демон
+    ├── media_ingest            ← USB демон
+    ├── uart_rx_dump            ← диагностическая утилита
+    └── platform/dispmanx/
+        └── libdispmanx_renderer.a
 
 build/pi-debug/              ← debug-бинари (-g3 -O0)
     └── indicator-debug
 ```
 
 `build/` примонтирован как bind mount в devcontainer — файлы видны и на хосте, и в контейнере одновременно.
+
+---
+
+## Файловая структура на Pi
+
+```bash
+/home/pi/indicator/
+├── indicator              ← C-демон
+├── media_ingest           ← USB демон
+├── pi_nku_sync            ← Rust: синхронизация конфига с MCU
+├── pi_nku_menu            ← Rust TUI: редактирование параметров
+├── pi_nku_configs/        ← bind mount → /data/pi_nku_configs/
+├── resources/             ← bind mount → /data/resources/
+├── sounds/                ← bind mount → /data/sounds/
+├── videos/                ← bind mount → /data/videos/
+├── splash/
+│   └── splash.jpg
+├── scripts/
+│   ├── run_setup.sh       ← splash → pull → menu → push → status
+│   ├── first_boot.sh      ← hostname + SSH keys (один раз)
+│   ├── smoke_test.sh
+│   └── check_resources.sh
+└── tools/
+    ├── uart_rx_dump
+    └── MUp-rpi0
+
+/data/                     ← writable data (сейчас директория; Deploy v2 → ext4 раздел)
+├── first_boot_done        ← флаг первого старта
+├── setup_status           ← ok | pull_failed | push_failed | pending
+├── pi_nku_configs/
+├── resources/
+├── sounds/
+└── videos/
+    └── output.mp4
+```
 
 ---
 
@@ -330,3 +412,7 @@ build/pi-debug/              ← debug-бинари (-g3 -O0)
 | SSH: `Bad configuration option: usekeychain` | macOS SSH config в контейнере | Rebuild Container (postCreateCommand патчит автоматически) |
 | GDB: `Connection timed out` на `localhost:3333` | Туннель на хосте, gdb в контейнере | Использовать `host.docker.internal:3333` |
 | `printf` не виден в debug console | stdout буферизован в файл | `just pi::debug-output` или добавить `fflush(stdout)` |
+| SIGSEGV до `main()` при первом запуске | `libpng16.a` ARMv7 статически слинкована | Запустить `just pi::fetch-png-sysroot` (берёт `.so` с Pi) |
+| `indicator.service: Failed with result 'timeout'` при stop | dbus-daemon вне pgroup omxplayer | Ожидаемо (P-24), не блокирует; исправить в Deploy v2 |
+| Видео зависает после длительного простоя | VideoCore IV dormant state | `renderer_keepalive()` вызывается из watchdog tick — уже реализовано |
+| `just pi::dump` — порт хардкодирован | TODO в pi.just | Временно: /dev/ttyAMA0 115200 работает на реальном устройстве |
