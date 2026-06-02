@@ -69,4 +69,6 @@ dtoverlay=i2s-mmap
 # Включение аппаратного Watchdog
 dtparam=watchdog=on
 
+# Отключить радужный прямоугольник GPU при загрузке
+disable_splash=1
 

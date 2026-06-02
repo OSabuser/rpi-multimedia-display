@@ -303,6 +303,30 @@ for TOOL in pi_nku_sync pi_nku_menu; do
 done
 echo ""
 
+
+# ─── 6.6 Boot splash ─────────────────────────────────────────────────────────
+ 
+echo "── Boot splash ─────────────────────────────────────────"
+SPLASH_PATH="/home/pi/indicator/splash/splash.jpg"
+CHECKED=$((CHECKED + 1))
+ 
+if [[ ! -f "$SPLASH_PATH" ]]; then
+    fail "MISSING: splash.jpg → $SPLASH_PATH"
+elif [[ ! -s "$SPLASH_PATH" ]]; then
+    fail "EMPTY: splash.jpg → $SPLASH_PATH"
+else
+    # Проверить JPEG-сигнатуру (первые 3 байта: FF D8 FF)
+    SIG=$(xxd -p -l 3 "$SPLASH_PATH" 2>/dev/null || \
+          hexdump -e '3/1 "%02x"' -n 3 "$SPLASH_PATH" 2>/dev/null || echo "")
+    if [[ "$SIG" == "ffd8ff" ]]; then
+        SIZE=$(stat -c%s "$SPLASH_PATH" 2>/dev/null || stat -f%z "$SPLASH_PATH")
+        ok "splash.jpg (${SIZE} bytes)"
+    else
+        fail "INVALID JPEG: splash.jpg (sig: $SIG)"
+    fi
+fi
+echo ""
+
 # ─── 7. Configs ──────────────────────────────────────────────────────────────
 
 echo "── Configs ─────────────────────────────────────────────"

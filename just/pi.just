@@ -338,6 +338,25 @@ deploy-rust:
         "{{_pi}}:{{PI_DIR}}/"
     echo "  ✅  Rust tools deployed"
 
+[doc('Задеплоить boot splash (splash.jpg → /boot/ и /home/pi/indicator/splash/)')]
+[group('deploy')]
+deploy-splash:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    SPLASH="deploy/boot/splash.jpg"
+    if [ ! -f "$SPLASH" ]; then
+        echo "  ❌  $SPLASH not found"
+        exit 1
+    fi
+    echo "  📤  Deploying splash to {{_pi}}..."
+    # /boot — FAT32, монтируется под root; копируем через /tmp
+    rsync -avz "$SPLASH" "{{_pi}}:/tmp/splash.jpg"
+    ssh "{{_pi}}" "sudo cp /tmp/splash.jpg /boot/splash.jpg && rm /tmp/splash.jpg"
+    # Рабочая директория — под pi
+    ssh "{{_pi}}" "mkdir -p {{PI_DIR}}/splash"
+    rsync -avz "$SPLASH" "{{_pi}}:{{PI_DIR}}/splash/splash.jpg"
+    echo "  ✅  splash.jpg deployed"
+
 [doc('Проверить ресурсы, конфиги и bind-монты на Pi')]
 [group('deploy')]
 check-resources:

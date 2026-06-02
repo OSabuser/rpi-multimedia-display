@@ -152,6 +152,35 @@ step "Маскировка getty@tty1"
 systemctl mask getty@tty1.service
 ok "getty@tty1 masked"
 
+
+# ─── 10. Boot splash ────────────────────────────────────────────────────────── 
+step "Настройка boot splash"
+ 
+# Установить fbi (framebuffer image viewer)
+apt-get install -y -q fbi
+ok "fbi installed"
+ 
+# Создать директорию для splash
+mkdir -p /home/pi/indicator/splash
+chown pi:pi /home/pi/indicator/splash
+ 
+# Скопировать splash.jpg с boot-раздела (деплоится туда же что и config.txt)
+if [ -f /boot/splash.jpg ]; then
+    cp /boot/splash.jpg /home/pi/indicator/splash/splash.jpg
+    chown pi:pi /home/pi/indicator/splash/splash.jpg
+    ok "splash.jpg copied from /boot/splash.jpg"
+else
+    warn "splash.jpg not found in /boot/ — положи файл вручную или через just pi::deploy-splash"
+    warn "Путь на устройстве: /home/pi/indicator/splash/splash.jpg"
+fi
+ 
+ok "Boot splash configured"
+
+step "Настройка sudoers для fbi (boot splash)"
+echo "pi ALL=(root) NOPASSWD: /usr/bin/fbi" > /etc/sudoers.d/indicator-fbi
+chmod 0440 /etc/sudoers.d/indicator-fbi
+ok "sudoers configured for fbi"
+
 # ─── Итог ─────────────────────────────────────────────────────────────────────
 
 step "Итог"

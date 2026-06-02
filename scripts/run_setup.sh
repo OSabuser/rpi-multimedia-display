@@ -14,12 +14,23 @@ set -uo pipefail
 
 IND="/home/pi/indicator"
 STATUS_FILE="/data/setup_status"
+BOOT_DELAY=3
+
 
 log() { logger -t indicator-setup "$*"; echo "[setup] $*"; }
 
 echo "pending" > "$STATUS_FILE"
-log "MCU sync started (pull → menu → push)"
 
+# ── 0. Boot splash (3 секунды пока MCU инициализируется) ─────────────────────
+if [ -f "$IND/splash/splash.jpg" ] && command -v fbi &>/dev/null; then
+    sudo fbi -T 2 --noverbose "$IND/splash/splash.jpg" &
+    FBI_PID=$!
+    sleep 5
+    sudo kill "$FBI_PID" 2>/dev/null || true
+    wait "$FBI_PID" 2>/dev/null || true
+fi
+
+log "MCU sync started (pull → menu → push)"
 # ── 1. Pull ───────────────────────────────────────────────────────────────────
 log "Step 1/3: pulling parameters from MCU..."
 if ! "$IND/pi_nku_sync" -m pull; then
