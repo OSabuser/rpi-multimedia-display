@@ -66,4 +66,7 @@ dtparam=audio=off
 dtoverlay=hifiberry-dac
 dtoverlay=i2s-mmap
 
+# Включение аппаратного Watchdog
+dtparam=watchdog=on
+
 

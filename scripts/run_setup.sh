@@ -31,6 +31,11 @@ log "Pull OK"
 
 # ── 2. TUI-меню (30s timeout, продолжить автоматически) ───────────────────────
 log "Step 2/3: config menu (30s, interact on display or wait)..."
+
+# Очистить tty1 от загрузочных сообщений перед запуском TUI
+printf '\033[2J\033[H' > /dev/tty1   # ESC[2J = clear screen, ESC[H = cursor home
+chvt 1                                # переключить VT на tty1 (на случай если не там)
+
 timeout --foreground 30s "$IND/pi_nku_menu" || true
 log "Menu done"
 
