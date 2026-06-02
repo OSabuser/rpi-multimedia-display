@@ -10,7 +10,7 @@ build-env/pi-sysroot/usr/
 # Образы SD-карт
 *.img
 *.img.gz
-output.mp4
+deploy/video/output.mp4
 
 # macOS
 .DS_Store
@@ -18,7 +18,7 @@ output.mp4
 
 # VSCode (личные настройки)
 .vscode/settings.json
-
+project_tree.txt
 
 # CLion
 .idea/

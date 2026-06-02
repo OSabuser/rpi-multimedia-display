@@ -55,10 +55,7 @@ ship:
         indicator-build \
         just build::pi
     echo "  📤  Deploying to Pi..."
-    just pi::deploy
-    just pi::deploy-rust 
-    echo "  🔍  Checking resources on Pi..."
+    just pi::deploy        # ← быстрый деплой при разработке
     just pi::check-resources
-    echo "  🔄  Restarting indicator..."
     just pi::restart
     echo "  ✅  Ship complete"

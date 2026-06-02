@@ -416,6 +416,13 @@ check_bind_mount "${IND}/videos"
 
 echo ""
 
+CHECKED=$((CHECKED + 1))
+if [ -f "/data/videos/output.mp4" ]; then
+    SIZE=$(stat -c%s /data/videos/output.mp4 2>/dev/null || stat -f%z /data/videos/output.mp4)
+    ok "output.mp4 ($(( SIZE / 1024 / 1024 )) MB)"
+else
+    fail "MISSING: /data/videos/output.mp4"
+fi
 
 # ─── Итог ────────────────────────────────────────────────────────────────────
 

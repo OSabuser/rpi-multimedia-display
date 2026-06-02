@@ -60,7 +60,7 @@ extern char **environ;
 #define AUDIO_MUSIC_COUNT 7
 
 /**
- * Сентинель «ничего не воспроизводится».
+ * IDLE приоритет «ничего не воспроизводится».
  * Любой реальный приоритет меньше этого значения →
  * любой новый элемент «вытесняет» (на деле — просто добавляется в пустую очередь).
  */
@@ -156,14 +156,14 @@ static void set_alsa_volume(int vol_pct)
  * @param target_vol  целевая громкость %
  * @param current_vol [in/out] последняя установленная громкость; -1 = неизвестна
  */
-static void maybe_set_volume(int target_vol, int *current_vol)
+static void maybe_set_volume(int target_vol, int *p_current_vol)
 {
-    if (*current_vol == target_vol)
+    if (*p_current_vol == target_vol)
     {
         return;
     }
     set_alsa_volume(target_vol);
-    *current_vol = target_vol;
+    *p_current_vol = target_vol;
 }
 
 /**
@@ -244,9 +244,9 @@ static int check_preempted(audio_player_t *p_ap, audio_prio_t current_prio)
 
 /* ─── Worker-поток ───────────────────────────────────────────────────────── */
 
-static void *audio_worker(void *arg)
+static void *audio_worker(void *p_arg)
 {
-    audio_player_t *ap = (audio_player_t *) arg;
+    audio_player_t *ap = (audio_player_t *) p_arg;
 
     /* Локальный кэш текущего уровня ALSA — избегаем лишних вызовов amixer */
     int current_vol = -1; /* -1 = уровень не установлен */
@@ -460,24 +460,29 @@ void audio_player_play(audio_player_t *p_ap, const audio_sequence_t *p_seq, audi
     pthread_mutex_lock(&p_ap->mutex);
 
     /*
-     * Решение о вытеснении:
-     *   prio < current_prio (включая AUDIO_PRIO_NONE = 99, т.е. «ничего не играет»)
-     *   ИЛИ prio меньше любого элемента в очереди.
+     * Решение о вытеснении через эффективный приоритет.
      *
-     * При вытеснении: убиваем текущий aplay, очищаем очередь.
+     * Проблема наивной проверки (prio < current_prio):
+     *   worker-поток обновляет current_prio только когда подбирает элемент.
+     *   Если DING(1) уже поставлен в очередь, но worker ещё не успел взять его,
+     *   current_prio всё ещё = MUSIC(3). Следующий OPENING(2) видит 2 < 3 → true
+     *   и вытесняет DING из очереди — DING теряется, music_wanted не сбрасывается.
+     *
+     * Решение: effective_prio = min(current_prio, min приоритет в очереди).
+     *   Тогда OPENING(2) видит effective_prio=min(3,1)=1 → 2 < 1 = false → не вытесняет.
+     *
+     * При вытеснении: убиваем текущий aplay, очищаем очередь,
+     * сбрасываем current_prio в NONE чтобы не оставлять stale-значение.
      */
-    int should_preempt = (prio < (int) p_ap->current_prio);
-    if (!should_preempt)
+    int effective_prio = (int) p_ap->current_prio;
+    for (int i = 0; i < p_ap->queue_count; i++)
     {
-        for (int i = 0; i < p_ap->queue_count; i++)
+        if ((int) p_ap->queue[i].prio < effective_prio)
         {
-            if (prio < (int) p_ap->queue[i].prio)
-            {
-                should_preempt = 1;
-                break;
-            }
+            effective_prio = (int) p_ap->queue[i].prio;
         }
     }
+    int should_preempt = ((int) prio < effective_prio);
 
     if (should_preempt)
     {
@@ -486,6 +491,7 @@ void audio_player_play(audio_player_t *p_ap, const audio_sequence_t *p_seq, audi
             (void) kill(p_ap->current_pid, SIGTERM);
         }
         p_ap->queue_count = 0;
+        p_ap->current_prio = AUDIO_PRIO_NONE; /* сбросить: worker обновит когда подберёт элемент */
         syslog(LOG_DEBUG, "audio: preempt by prio=%d", (int) prio);
     }
 

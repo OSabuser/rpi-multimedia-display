@@ -217,35 +217,23 @@ enable-services:
 # ГРУППА: deploy — деплой на Pi
 # =============================================================================
 
-[doc('Задеплоить бинари + скрипты + systemd units на Pi')]
+[doc('Задеплоить systemd units на Pi')]
 [group('deploy')]
-deploy:
+deploy-systemd:
     #!/usr/bin/env bash
     set -euo pipefail
-    if [ ! -f "{{BUILD_DIR}}/pi/indicator" ]; then
-        echo "  ❌  Binaries not found. Run: just build::pi"
-        exit 1
-    fi
-    echo "  📤  Deploying to {{_pi}}:{{PI_DIR}}..."
+    echo "  📤  Deploying systemd units to {{_pi}}..."
+    rsync -avz --progress deploy/systemd/ "{{_pi}}:/tmp/indicator-systemd/"
+    ssh "{{_pi}}" "sudo cp /tmp/indicator-systemd/* /etc/systemd/system/ && \
+                   sudo systemctl daemon-reload"
+    echo "  ✅  systemd units deployed"
 
-    # Основные бинари
-    rsync -avz --progress \
-        "{{BUILD_DIR}}/pi/indicator" \
-        "{{BUILD_DIR}}/pi/media_ingest" \
-        "{{_pi}}:{{PI_DIR}}/"
-
-    # Rust утилиты (pi_nku_sync, pi_nku_menu)
-    if [ -f "deploy/bin/pi_nku_sync" ]; then
-        just pi::deploy-rust
-    else
-        echo "  ⚠️   deploy/bin/pi_nku_sync not found — skipping Rust tools"
-        echo "       Run: just pi::deploy-rust after placing binaries in deploy/bin/"
-    fi
-
-    # Диагностические утилиты
-    just pi::deploy-tools
-
-    # Скрипты
+[doc('Задеплоить скрипты (run_setup.sh, first_boot.sh, smoke_test.sh, check_resources.sh)')]
+[group('deploy')]
+deploy-scripts:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "  📤  Deploying scripts to {{_pi}}:{{PI_DIR}}/scripts/..."
     ssh "{{_pi}}" "mkdir -p {{PI_DIR}}/scripts"
     rsync -avz --progress \
         scripts/smoke_test.sh \
@@ -254,19 +242,17 @@ deploy:
         scripts/first_boot.sh \
         "{{_pi}}:{{PI_DIR}}/scripts/"
     ssh "{{_pi}}" "chmod +x {{PI_DIR}}/scripts/*.sh"
+    echo "  ✅  Scripts deployed"
 
-    # systemd units (все файлы из deploy/systemd/)
-    rsync -avz --progress deploy/systemd/ "{{_pi}}:/tmp/indicator-systemd/"
-    ssh "{{_pi}}" "sudo cp /tmp/indicator-systemd/* /etc/systemd/system/ && \
-                   sudo systemctl daemon-reload"
-
-    echo "  ✅  Deploy complete"
-
-[doc('Задеплоить только основные бинари: indicator + media_ingest (быстро)')]
+[doc('Задеплоить только основные C-бинари: indicator + media_ingest (быстро)')]
 [group('deploy')]
 deploy-bin:
     #!/usr/bin/env bash
     set -euo pipefail
+    if [ ! -f "{{BUILD_DIR}}/pi/indicator" ]; then
+        echo "  ❌  Binaries not found. Run: just build::pi"
+        exit 1
+    fi
     echo "  📤  Deploying binaries to {{_pi}}:{{PI_DIR}}..."
     rsync -avz --progress \
         "{{BUILD_DIR}}/pi/indicator" \
@@ -274,7 +260,7 @@ deploy-bin:
         "{{_pi}}:{{PI_DIR}}/"
     echo "  ✅  Binaries deployed"
 
-[doc('Задеплоить диагностические утилиты: uart_rx_dump (сборка) + MUp-rpi0 (prebuilt)')]
+[doc('Задеплоить диагностические утилиты (uart_rx_dump + MUp-rpi0)')]
 [group('deploy')]
 deploy-tools:
     #!/usr/bin/env bash
@@ -285,42 +271,14 @@ deploy-tools:
     fi
     echo "  📤  Deploying tools to {{_pi}}:{{PI_DIR}}/tools/..."
     ssh "{{_pi}}" "mkdir -p {{PI_DIR}}/tools"
-    # uart_rx_dump — компилируется из исходников
     rsync -avz --progress \
         "{{BUILD_DIR}}/pi/uart_rx_dump" \
         "{{_pi}}:{{PI_DIR}}/tools/"
-    # MUp-rpi0 — pre-built бинарь из репозитория
     rsync -avz --progress \
         deploy/tools/MUp-rpi0 \
         "{{_pi}}:{{PI_DIR}}/tools/"
     echo "  ✅  Tools deployed"
 
-[doc('Задеплоить device-конфиги в /data/pi_nku_configs (video.toml, renderer.toml, menu_style.toml)')]
-[group('deploy')]
-deploy-configs:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    echo "  📤  Deploying configs to {{_pi}}:/data/pi_nku_configs/..."
-    rsync -avz --progress deploy/configs/ "{{_pi}}:/data/pi_nku_configs/"
-    echo "  ✅  Configs deployed"
-
-[doc('Задеплоить PNG-ресурсы в /data/resources')]
-[group('deploy')]
-deploy-resources:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    echo "  📤  Syncing resources to {{_pi}}:/data/resources/..."
-    rsync -avz --progress deploy/resources/ "{{_pi}}:/data/resources/"
-    echo "  ✅  Resources deployed"
-
-[doc('Задеплоить WAV-звуки в /data/sounds')]
-[group('deploy')]
-deploy-sounds:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    echo "  📤  Syncing sounds to {{_pi}}:/data/sounds/..."
-    rsync -avz --progress deploy/sounds/ "{{_pi}}:/data/sounds/"
-    echo "  ✅  Sounds deployed"
 [doc('Задеплоить Rust-утилиты (pi_nku_sync, pi_nku_menu) → PI_DIR/')]
 [group('deploy')]
 deploy-rust:
@@ -338,7 +296,34 @@ deploy-rust:
         "{{_pi}}:{{PI_DIR}}/"
     echo "  ✅  Rust tools deployed"
 
-[doc('Задеплоить boot splash (splash.jpg → /boot/ и /home/pi/indicator/splash/)')]
+[doc('Задеплоить device-конфиги → /data/pi_nku_configs')]
+[group('deploy')]
+deploy-configs:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "  📤  Deploying configs to {{_pi}}:/data/pi_nku_configs/..."
+    rsync -avz --progress deploy/configs/ "{{_pi}}:/data/pi_nku_configs/"
+    echo "  ✅  Configs deployed"
+
+[doc('Задеплоить PNG-ресурсы → /data/resources')]
+[group('deploy')]
+deploy-resources:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "  📤  Syncing resources to {{_pi}}:/data/resources/..."
+    rsync -avz --progress deploy/resources/ "{{_pi}}:/data/resources/"
+    echo "  ✅  Resources deployed"
+
+[doc('Задеплоить WAV-звуки → /data/sounds')]
+[group('deploy')]
+deploy-sounds:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "  📤  Syncing sounds to {{_pi}}:/data/sounds/..."
+    rsync -avz --progress deploy/sounds/ "{{_pi}}:/data/sounds/"
+    echo "  ✅  Sounds deployed"
+
+[doc('Задеплоить boot splash → /boot/splash.png + PI_DIR/splash/')]
 [group('deploy')]
 deploy-splash:
     #!/usr/bin/env bash
@@ -349,13 +334,63 @@ deploy-splash:
         exit 1
     fi
     echo "  📤  Deploying splash to {{_pi}}..."
-    # /boot — FAT32, монтируется под root; копируем через /tmp
-    rsync -avz "$SPLASH" "{{_pi}}:/tmp/splash.jpg"
-    ssh "{{_pi}}" "sudo cp /tmp/splash.jpg /boot/splash.jpg && rm /tmp/splash.jpg"
-    # Рабочая директория — под pi
+    rsync -avz "$SPLASH" "{{_pi}}:/tmp/splash_src.jpg"
+    ssh "{{_pi}}" "sudo convert /tmp/splash_src.jpg /boot/splash.png && \
+                   rm /tmp/splash_src.jpg"
     ssh "{{_pi}}" "mkdir -p {{PI_DIR}}/splash"
     rsync -avz "$SPLASH" "{{_pi}}:{{PI_DIR}}/splash/splash.jpg"
-    echo "  ✅  splash.jpg deployed"
+    echo "  ✅  splash deployed"
+
+[doc('Задеплоить фоновое видео → /data/videos/output.mp4')]
+[group('deploy')]
+deploy-video:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    VIDEO="deploy/video/output.mp4"
+    if [ ! -f "$VIDEO" ]; then
+        echo "  ❌  $VIDEO not found"
+        echo "     Положи видеофайл в deploy/video/output.mp4"
+        exit 1
+    fi
+    echo "  📤  Deploying video to {{_pi}}:/data/videos/..."
+    rsync -avz --progress "$VIDEO" "{{_pi}}:/data/videos/output.mp4"
+    echo "  ✅  Video deployed"
+
+[doc('Быстрый деплой: бинари + скрипты + systemd + конфиги + Rust (без ресурсов и видео)')]
+[group('deploy')]
+deploy:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo ""
+    echo "  🚀  Deploy: bin + tools + rust + scripts + systemd + configs"
+    echo "  ──────────────────────────────────────────────────────────"
+    just pi::deploy-bin
+    just pi::deploy-tools
+    just pi::deploy-rust
+    just pi::deploy-scripts
+    just pi::deploy-systemd
+    just pi::deploy-configs
+    echo "  ──────────────────────────────────────────────────────────"
+    echo "  ✅  Deploy complete"
+    echo "  ℹ️   Ресурсы/звуки/видео: just pi::deploy-full"
+    echo ""
+
+[doc('Полный деплой: deploy + ресурсы + звуки + splash + видео (свежая установка)')]
+[group('deploy')]
+deploy-full:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo ""
+    echo "  🚀  Full deploy: all assets included"
+    echo "  ──────────────────────────────────────────────────────────"
+    just pi::deploy
+    just pi::deploy-resources
+    just pi::deploy-sounds
+    just pi::deploy-splash
+    just pi::deploy-video
+    echo "  ──────────────────────────────────────────────────────────"
+    echo "  ✅  Full deploy complete"
+    echo ""
 
 [doc('Проверить ресурсы, конфиги и bind-монты на Pi')]
 [group('deploy')]

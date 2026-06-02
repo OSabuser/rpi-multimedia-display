@@ -59,29 +59,155 @@ systemctl disable --now serial-getty@ttyAMA0.service    2>/dev/null || true
 systemctl disable --now triggerhappy.service            2>/dev/null || true
 ok "Unnecessary services disabled"
 
-# ─── 4. ALSA softvol для MAX98357 ────────────────────────────────────────────
+# ─── 4. I2S overlay (googlevoicehat) ─────────────────────────────────────────
+#
+# MAX98357A подключён через I2S. ALSA-карта появляется только после загрузки
+# dtoverlay=googlevoicehat-soundcard.
+#
+# Примечание по имени: это стандартный overlay для I2S-усилителей Adafruit
+# (Speaker Bonnet / MAX98357). Несмотря на название «googlevoicehat» — это не
+# Google Voice HAT. Adafruit использует тот же overlay, так как он предоставляет
+# нужный I2S-маппинг. Overlay НУЖЕН: без него MAX98357 не виден как ALSA-устройство.
+#
+# Встроенный audio (bcm2835) отключаем: при включённом built-in card индексы
+# могут меняться и MAX98357 окажется не card 0.
 
-step "Настройка ALSA softvol для MAX98357"
+step "Настройка I2S overlay для MAX98357 (googlevoicehat-soundcard)"
+
+BOOT_CONFIG="/boot/config.txt"
+
+if grep -q "^dtoverlay=googlevoicehat-soundcard" "$BOOT_CONFIG"; then
+    warn "dtoverlay=googlevoicehat-soundcard уже есть — пропускаем"
+else
+    echo "dtoverlay=googlevoicehat-soundcard" >> "$BOOT_CONFIG"
+    ok "dtoverlay=googlevoicehat-soundcard добавлен в $BOOT_CONFIG"
+fi
+
+# Отключить встроенный bcm2835 audio — иначе I2S-карта может оказаться не card 0
+if grep -q "^dtparam=audio=on" "$BOOT_CONFIG"; then
+    sed -i 's|^dtparam=audio=on|#dtparam=audio=on  # disabled by setup_pi.sh (I2S amp)|' "$BOOT_CONFIG"
+    ok "dtparam=audio=on отключён"
+else
+    warn "dtparam=audio=on не найден — пропускаем"
+fi
+
+ok "I2S overlay configured"
+
+# ─── 5. ALSA: dmix + softvol для MAX98357 ────────────────────────────────────
+#
+# Стек (снизу вверх):
+#   speakerbonnet  = hw card 0  (I2S amp, видна после googlevoicehat overlay)
+#   dmixer         = dmix поверх speakerbonnet — позволяет нескольким процессам
+#                    (indicator + i2s-silence.service) одновременно выводить звук
+#   softvol        = программный регулятор громкости «PCM» поверх dmixer
+#   !default       = plug → softvol (используется aplay/amixer без явного -D)
+#
+# Параметры slave: 48000 Hz / S16_LE / 2ch (stereo)
+# Все WAV-файлы задеплоены в этом же формате.
+
+step "Настройка ALSA (dmix + softvol) для MAX98357"
 cat > /etc/asound.conf << 'ALSA'
-# Программный регулятор громкости для MAX98357 (hifiberry-dac)
-# MAX98357 не имеет аппаратного volume control в ALSA
-pcm.!default {
-    type            softvol
-    slave.pcm       "plughw:0,0"
-    control.name    "PCM"
-    control.card    0
-    min_dB          -51.0
-    max_dB          0.0
-    resolution      256
+# /etc/asound.conf — MAX98357A через I2S (Speaker Bonnet / googlevoicehat overlay)
+# Сгенерирован setup_pi.sh. Не редактировать вручную.
+
+# ── Уровень 1: аппаратная карта ──────────────────────────────────────────────
+pcm.speakerbonnet {
+    type hw
+    card 0
 }
+
+# ── Уровень 2: dmix — разделяемый микшер ─────────────────────────────────────
+# Позволяет indicator и i2s-silence.service одновременно выводить звук.
+# Держит I2S-тактирование активным → устраняет щелчки при старте/конце трека.
+pcm.dmixer {
+    type     dmix
+    ipc_key  1024
+    ipc_perm 0666
+    slave {
+        pcm         "speakerbonnet"
+        period_time 0
+        period_size 1024
+        buffer_size 8192
+        rate        48000
+        channels    2
+        format      S16_LE
+    }
+}
+
+ctl.dmixer {
+    type hw
+    card 0
+}
+
+# ── Уровень 3: softvol — программная громкость ───────────────────────────────
+# amixer sset 'PCM' N%  →  управляет этим контролом.
+# MAX98357 не имеет аппаратного volume control в ALSA.
+pcm.softvol {
+    type        softvol
+    slave.pcm   "dmixer"
+    control {
+        name "PCM"
+        card 0
+    }
+    min_dB     -51.0
+    max_dB     0.0
+    resolution 256
+}
+
+ctl.softvol {
+    type hw
+    card 0
+}
+
+# ── Уровень 4: default — точка входа для aplay/amixer ────────────────────────
+pcm.!default {
+    type      plug
+    slave.pcm "softvol"
+}
+
 ctl.!default {
-    type    hw
-    card    0
+    type hw
+    card 0
 }
 ALSA
-ok "ALSA softvol configured: /etc/asound.conf"
+ok "ALSA configured: /etc/asound.conf (48kHz / S16_LE / stereo / dmix+softvol)"
 
-# ─── 5. /data structure (мутабельные данные устройства) ──────────────────────
+# ─── 6. i2s-silence.service — устранение щелчков ─────────────────────────────
+#
+# Проблема: MAX98357A при простое отключает I2S-тактирование. При следующем
+# воспроизведении PLL заново захватывает частоту → щелчок в начале и конце звука.
+#
+# Решение: держать dmixer постоянно активным через непрерывное воспроизведение
+# тишины из /dev/zero. Нагрузка на CPU минимальна (~0.3% на Zero 2W).
+#
+# КРИТИЧНО: rate/format/channels должны ТОЧНО совпадать с параметрами slave
+# в pcm.dmixer выше. Несовпадение → plug-конвертация → задержка → щелчки снова.
+
+step "Установка i2s-silence.service (I2S clock keepalive)"
+cat > /etc/systemd/system/i2s-silence.service << 'UNIT'
+[Unit]
+Description=I2S clock keepalive (silence playback via dmixer)
+After=sound.target
+Wants=sound.target
+StartLimitBurst=10
+StartLimitIntervalSec=30
+
+[Service]
+Type=simple
+User=pi
+ExecStart=/usr/bin/aplay -D dmixer -t raw -r 48000 -c 2 -f S16_LE /dev/zero
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+systemctl daemon-reload
+systemctl enable i2s-silence.service
+ok "i2s-silence.service installed and enabled"
+
+# ─── 7. /data structure (мутабельные данные устройства) ──────────────────────
 
 step "Создание /data структуры"
 mkdir -p \
@@ -96,7 +222,7 @@ mkdir -p \
 chown -R pi:pi "$DATA"
 ok "/data structure created"
 
-# ─── 6. /home/pi/indicator/ (бинари + точки монтирования) ───────────────────
+# ─── 8. /home/pi/indicator/ (бинари + точки монтирования) ───────────────────
 
 step "Создание директорий приложения"
 mkdir -p \
@@ -109,7 +235,7 @@ mkdir -p \
 chown -R pi:pi "$IND"
 ok "Application directories created"
 
-# ─── 7. Bind-монты в /etc/fstab ──────────────────────────────────────────────
+# ─── 9. Bind-монты в /etc/fstab ──────────────────────────────────────────────
 
 step "Настройка bind-монтов (/data → $IND)"
 
@@ -137,7 +263,7 @@ mount --bind "$DATA/sounds"         "$IND/sounds"
 mount --bind "$DATA/videos"         "$IND/videos"
 ok "Bind mounts active"
 
-# ─── 8. IPC FIFO (indicator ↔ media_ingest) ──────────────────────────────────
+# ─── 10. IPC FIFO (indicator ↔ media_ingest) ─────────────────────────────────
 
 step "Создание FIFO для IPC"
 cat > /etc/tmpfiles.d/indicator.conf << 'TMPFILES'
@@ -146,40 +272,11 @@ TMPFILES
 systemd-tmpfiles --create /etc/tmpfiles.d/indicator.conf
 ok "IPC FIFO configured: /run/indicator-media.fifo"
 
-# ─── 9. Маскировка getty@tty1 (для TUI при старте) ───────────────────────────
+# ─── 11. Маскировка getty@tty1 (для TUI при старте) ──────────────────────────
 
 step "Маскировка getty@tty1"
 systemctl mask getty@tty1.service
 ok "getty@tty1 masked"
-
-
-# ─── 10. Boot splash ────────────────────────────────────────────────────────── 
-step "Настройка boot splash"
- 
-# Установить fbi (framebuffer image viewer)
-apt-get install -y -q fbi
-ok "fbi installed"
- 
-# Создать директорию для splash
-mkdir -p /home/pi/indicator/splash
-chown pi:pi /home/pi/indicator/splash
- 
-# Скопировать splash.jpg с boot-раздела (деплоится туда же что и config.txt)
-if [ -f /boot/splash.jpg ]; then
-    cp /boot/splash.jpg /home/pi/indicator/splash/splash.jpg
-    chown pi:pi /home/pi/indicator/splash/splash.jpg
-    ok "splash.jpg copied from /boot/splash.jpg"
-else
-    warn "splash.jpg not found in /boot/ — положи файл вручную или через just pi::deploy-splash"
-    warn "Путь на устройстве: /home/pi/indicator/splash/splash.jpg"
-fi
- 
-ok "Boot splash configured"
-
-step "Настройка sudoers для fbi (boot splash)"
-echo "pi ALL=(root) NOPASSWD: /usr/bin/fbi" > /etc/sudoers.d/indicator-fbi
-chmod 0440 /etc/sudoers.d/indicator-fbi
-ok "sudoers configured for fbi"
 
 # ─── Итог ─────────────────────────────────────────────────────────────────────
 

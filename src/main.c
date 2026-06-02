@@ -447,6 +447,13 @@ static void on_uart_frame(const mu_frame_t *p_frame, void *p_ctx)
                 sound_map_resolve(payload.sound, floor, &seq);
                 if (seq.valid)
                 {
+                    /* Не запускать музыку в нештатном режиме или при активном диспетчере.
+         * Сам звук (up.wav / down.wav) воспроизводится как обычно — только
+         * флаг needs_music подавляется, чтобы worker не поставил music_wanted=1. */
+                    if (payload.mode != MODE_NORMAL || p_app->state.active_dispatch != DISPATCH_OFF)
+                    {
+                        seq.needs_music = 0;
+                    }
                     audio_prio_t prio = sound_to_prio(payload.sound);
                     audio_player_play(p_app->audio, &seq, prio);
                 }
@@ -593,7 +600,6 @@ int main(int argc, char *p_argv[])
     state_init(&app.state);
 
     /* ── nku_scheme.toml ─────────────────────────────────────────────────── */
-
     if (config_load(p_config_path, &app.cfg) < 0)
     {
         syslog(LOG_WARNING, "config: '%s' not found, using defaults", p_config_path);
@@ -605,7 +611,6 @@ int main(int argc, char *p_argv[])
     }
 
     /* ── video.toml ──────────────────────────────────────────────────────── */
-
     char video_cfg_path[256];
     derive_sibling_path(p_config_path, VIDEO_CONFIG_FILENAME, video_cfg_path,
                         sizeof(video_cfg_path));
@@ -622,7 +627,6 @@ int main(int argc, char *p_argv[])
     }
 
     /* ── renderer.toml ───────────────────────────────────────────────────── */
-
     char renderer_cfg_path[256];
     derive_sibling_path(p_config_path, RENDERER_CONFIG_FILENAME, renderer_cfg_path,
                         sizeof(renderer_cfg_path));
@@ -641,7 +645,6 @@ int main(int argc, char *p_argv[])
     }
 
     /* ── pi_scheme.toml (UART port + baudrate) ───────────────────────────── */
-
     uart_config_t uart_cfg;
     char uart_cfg_path[256];
     derive_sibling_path(p_config_path, UART_CONFIG_FILENAME, uart_cfg_path, sizeof(uart_cfg_path));
