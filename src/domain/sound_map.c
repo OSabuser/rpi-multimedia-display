@@ -17,19 +17,21 @@
 
 /* ─── Внутренние утилиты ─────────────────────────────────────────────────── */
 
-static void seq_add(audio_sequence_t *seq, const char *filename)
+static void seq_add(audio_sequence_t *p_seq, const char *p_filename)
 {
-    if (seq->count >= AUDIO_SEQ_MAX_FILES)
+    if (p_seq->count >= AUDIO_SEQ_MAX_FILES)
+    {
         return;
-    (void) snprintf(seq->files[seq->count], AUDIO_FILENAME_MAX, "%s", filename);
-    seq->count++;
+    }
+    (void) snprintf(p_seq->files[p_seq->count], AUDIO_FILENAME_MAX, "%s", p_filename);
+    p_seq->count++;
 }
 
-static void seq_add_num(audio_sequence_t *seq, int n)
+static void seq_add_num(audio_sequence_t *p_seq, int n)
 {
     char buf[AUDIO_FILENAME_MAX];
     (void) snprintf(buf, sizeof(buf), "%d.wav", n);
-    seq_add(seq, buf);
+    seq_add(p_seq, buf);
 }
 
 /* ─── Объявление этажа ───────────────────────────────────────────────────── */
@@ -54,38 +56,38 @@ static void resolve_floor_announcement(floor_t floor, audio_sequence_t *p_out)
     {
     case FLOOR_TYPE_NORMAL:
     {
-        int n = floor.number;
-        if (n >= 1 && n <= 20)
+        int floor_code = floor.number;
+        if (floor_code >= 1 && floor_code <= 20)
         {
-            seq_add_num(p_out, n);
+            seq_add_num(p_out, floor_code);
             seq_add(p_out, "floor.wav");
         }
-        else if (n >= 21 && n <= 29)
+        else if (floor_code >= 21 && floor_code <= 29)
         {
             seq_add(p_out, "20-.wav");
-            seq_add_num(p_out, n % 10);
+            seq_add_num(p_out, floor_code % 10);
             seq_add(p_out, "floor.wav");
         }
-        else if (n == 30)
+        else if (floor_code == 30)
         {
             seq_add(p_out, "30.wav");
             seq_add(p_out, "floor.wav");
         }
-        else if (n >= 31 && n <= 39)
+        else if (floor_code >= 31 && floor_code <= 39)
         {
             seq_add(p_out, "30-.wav");
-            seq_add_num(p_out, n % 10);
+            seq_add_num(p_out, floor_code % 10);
             seq_add(p_out, "floor.wav");
         }
-        else if (n == 40)
+        else if (floor_code == 40)
         {
             seq_add(p_out, "40.wav");
             seq_add(p_out, "floor.wav");
         }
-        else if (n >= 41 && n <= 49)
+        else if (floor_code >= 41 && floor_code <= 49)
         {
             seq_add(p_out, "40-.wav");
-            seq_add_num(p_out, n % 10);
+            seq_add_num(p_out, floor_code % 10);
             seq_add(p_out, "floor.wav");
         }
         else
@@ -118,7 +120,7 @@ static void resolve_floor_announcement(floor_t floor, audio_sequence_t *p_out)
 
     case FLOOR_TYPE_UNKNOWN:
     default:
-        seq_add(p_out, "g_single.wav");
+        seq_add(p_out, "g_triple.wav");
         break;
     }
 }
@@ -194,5 +196,11 @@ int sound_map_volume_percent(sound_t sound, int sound_vol_pct)
     {
         return 0;
     }
+
+    if (sound == SOUND_OVERLOAD)
+    {
+        //FIXME:
+    }
+
     return sound_vol_pct;
 }

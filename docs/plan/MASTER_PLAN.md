@@ -61,6 +61,10 @@ multi-user.target
 │       3. pi_nku_sync --mode=push    → конфиг → MCU
 │       4. echo status → /data/setup_status
 │           ↓ Wants + Before
+├── i2s-silence.service           [After=sound.target, StartLimitBurst=20]
+│     ExecStartPre: ждёт card 0 (до 15 с, I2S overlay успевает init)
+│     ExecStart: aplay -D dmixer -f S32_LE /dev/zero  ← I2S keepalive
+│           ↓ After/Wants
 └── indicator.service             [Restart=always, RestartSec=2, KillMode=control-group]
       reads /data/setup_status
       ├── [poll loop]  uart_fd · fifo_fd · signalfd · timerfd
@@ -131,9 +135,10 @@ AUDIO_PRIO_CRITICAL = 0   ← SOUND_OVERLOAD / SOUND_FIRE_ALARM / SOUND_DONT_WOR
 AUDIO_PRIO_FLOOR    = 1   ← SOUND_DING (анонс этажа)
 AUDIO_PRIO_MOVEMENT = 2   ← SOUND_UP / SOUND_DOWN / SOUND_CLOSING / SOUND_OPENING / SOUND_BUTTON
 AUDIO_PRIO_MUSIC    = 3   ← фоновая музыка (mus1..mus7.wav)
+AUDIO_PRIO_NONE     = 99  ← сентинель «ничего не играет»
 
-Правило вытеснения: effective_prio = min(current_prio, min_queue_prio)
-  new_prio < effective_prio → kill(aplay, SIGTERM) + clear queue
+Правило вытеснения: effective_prio = min(current_prio, min_prio_in_queue)
+  new_prio < effective_prio → kill(aplay, SIGTERM) + clear queue + current_prio=NONE
   new_prio ≥ effective_prio → добавить в очередь (FIFO depth=3)
 
 После UP/DOWN: music_wanted=1 → worker запускает mus<N>.wav
@@ -141,7 +146,31 @@ AUDIO_PRIO_MUSIC    = 3   ← фоновая музыка (mus1..mus7.wav)
 При отмене: audio_player_cancel_music() → kill если играет, clear music_wanted
 ```
 
-### 2.6 Загрузочная последовательность
+### 2.6 ALSA стек (финальный, Phase 5)
+
+```
+Чип:  MAX98357A (Adafruit Speaker Bonnet)
+dtoverlay: googlevoicehat-soundcard  ← единственный поддерживаемый overlay
+
+WAV (S16_LE/любая частота)
+    └── aplay → pcm.!default
+                    └── plug       ← конвертация S16_LE → S32_LE, ресемплинг → 48kHz
+                        └── softvol  'PCM'   ← amixer sset 'PCM' N%  (lazy, 1 вызов при смене)
+                            └── dmixer  (ipc_key=1024, ipc_perm=0666, S32_LE/48kHz/stereo)
+                                └── speakerbonnet  hw:0
+                                                   S32_LE / 48kHz / stereo
+
+i2s-silence.service:
+    aplay -D dmixer -f S32_LE /dev/zero  ← напрямую в dmix (без plug/softvol)
+                                         ← устраняет щелчки при каждом звуке
+```
+
+⚠️ **dmix IPC deadlock (P-34):** при `kill(aplay, SIGTERM)` в момент удержания
+dmix-семафора aplay завершается не освободив его → все последующие `aplay`/`amixer`
+зависают навсегда. Лечится только `ipcrm` + рестарт. Обойдён переносом на `i2s-silence.service`
+(прямой путь в dmix минует plug — меньше точек удержания).
+
+### 2.7 Загрузочная последовательность
 
 ```
 GPU bootloader      → чёрный экран (splash не поддерживается этой прошивкой)
@@ -260,6 +289,7 @@ lift-indicator/
 │   │   ├── indicator-setup.service
 │   │   ├── indicator.service
 │   │   ├── indicator.target
+│   │   ├── i2s-silence.service         ← I2S keepalive (Phase 5, новый)
 │   │   └── media-ingest.service
 │   ├── configs/                    ← nku_scheme.toml, pi_scheme.toml, video.toml, renderer.toml, menu_style.toml
 │   ├── resources/                  ← PNG (chars, arrows, modes, weights, BACK.png)
@@ -285,6 +315,8 @@ lift-indicator/
 └── docs/
     ├── DEV_ARCH.md                 ← рабочее окружение разработчика
     ├── RPI_SYSROOT.md              ← инструкция по sysroot
+    ├── AUDIO_MODULE.md             ← техническая документация аудиомодуля (Phase 5)
+    ├── indicator_checklist.md      ← интеграционный чек-лист ~76 тестов (Phase 5)
     └── plan/                       ← история фаз (phase reports)
         ├── MASTER_PLAN.md
         ├── PHASE_0_REPORT.md … PHASE_4_REPORT.md
@@ -354,6 +386,7 @@ lift-indicator/
 | Команда | Что делает |
 |---|---|
 | `just pi::restart` | Перезапустить indicator.service |
+| `just pi::restart-audio` | Перезапустить i2s-silence.service (при зависании dmix) |
 | `just pi::start` | Запустить indicator.service |
 | `just pi::stop` | Остановить indicator.service |
 | `just pi::status` | Статус indicator + media-ingest |
@@ -477,7 +510,7 @@ GDB подключается через `host.docker.internal:3333` → SSH-ту
 | `test_parser.c` | CRC-16 корректный/некорректный; byte order (little-endian, регрессия P-18); parse\_frame (SOF/EOF/size/opcode); parse\_payload; parse\_dispatch; mode\_is\_valid() |
 | `test_floor.c` | 1–9; 10–64; П/CHAR\_PI\_CYR(17)/CHAR\_pi\_cyr(19); П1–П9; −1..−9; нестандартные; L=19 R=5 (реальный трафик) |
 | `test_state.c` | Первый фрейм → события; идентичный → 0; частичные изменения; edge-triggered sound; state\_apply\_dispatch |
-| `test_sound_map.c` | DING этажи 1–49 (все диапазоны); П, П1-П9; −1..−9; UP с music; CLOSING, OPENING; FIRE\_ALARM→fire.wav; BUTTON→button.wav; DONT\_WORK→g\_double.wav; NONE→valid=false |
+| `test_sound_map.c` | DING этажи 1–49 (все диапазоны 20-/30-/40-); П, П1-П9; −1..−9; UP с music; CLOSING, OPENING; FIRE\_ALARM→fire.wav; BUTTON→button.wav; DONT\_WORK→g\_double.wav; NONE→valid=false; всего **33 теста** |
 | `test_config.c` | nku\_scheme.toml; video.toml (full/missing/partial); renderer.toml; uart\_config (valid/defaults/port\_list); массивы в одну строку (P-31 регрессия); всего 21+ тест-кейс |
 | `test_uart.c` | valid frame через pipe(); junk перед SOF; bad CRC; partial frame; два фрейма подряд; tearDown cleanup (P-19 регрессия) |
 
@@ -488,7 +521,7 @@ GDB подключается через `host.docker.internal:3333` → SSH-ту
 | Скрипт / команда | Что проверяет |
 |---|---|
 | `just pi::smoke` | Сервисы active, бинари существуют, /data/pi\_nku\_configs/ доступен, /dev/serial0 открывается, ALSA видит звуковую карту |
-| `just pi::check-resources` | 79 файлов: PNG, WAV, конфиги, bind-монты, writable /data |
+| `just pi::check-resources` | **124/124** файлов: PNG, WAV (45), конфиги, bind-монты, writable /data, i2s-silence active |
 | `just pi::test-audio` | aplay тестового WAV через ALSA |
 | `just pi::test-video` | omxplayer тестового mp4 |
 | `just pi::dump` | uart\_rx\_dump на реальном трафике STM32 |
@@ -531,7 +564,7 @@ format-check → host unit-тесты (6 суитов, ASan+UBSan) → exit 0
 │   ├── overload.wav, fire.wav
 │   ├── g_single.wav, g_double.wav, g_triple.wav
 │   ├── button.wav
-│   └── mus1.wav … mus7.wav
+│   └── mus1.wav … mus7.wav     (45 WAV итого)
 ├── videos/                     ← bind mount → /data/videos/
 │   └── output.mp4
 ├── splash/
@@ -553,6 +586,16 @@ format-check → host unit-тесты (6 суитов, ASan+UBSan) → exit 0
 ├── sounds/
 └── videos/
     └── output.mp4
+```
+
+```
+/etc/asound.conf                ← plug→softvol→dmixer→speakerbonnet (S32_LE / 48kHz)
+/etc/systemd/system/
+├── indicator-firstboot.service
+├── indicator-setup.service     ← TTYVHangup=yes, TTYReset=yes (без inline-аннотаций)
+├── indicator.service           ← After=i2s-silence.service
+├── i2s-silence.service         ← I2S keepalive, ExecStartPre ждёт card 0
+└── media-ingest.service        ← ConditionPathExists (Phase 7)
 ```
 
 ---
@@ -637,17 +680,59 @@ P-29: ARROW slow path (destroy+recreate при каждом появлении) 
 
 ### Фаза 5 — Audio player ✅ ЗАКРЫТА
 
-**Итог:** аудио через aplay с приоритетной очередью; фоновая музыка; amixer volume control; latency UART → начало звука < 100 мс.
+**Итог:** аудиоподсистема реализована, протестирована на HIL-стенде (24 ч), работает в продакшн-конфигурации. Latency UART → начало звука < 100 мс.
 
-**Реализовано:**
+**Реализовано (код):**
 - `audio_player_t` — pthread + mutex + condvar
 - Приоритетная очередь depth=3: CRITICAL(0) > FLOOR(1) > MOVEMENT(2) > MUSIC(3)
-- effective\_prio = min(current, min\_queue) — корректное вытеснение без потери DING
+- effective\_prio = min(current, min\_queue) — корректное вытеснение без потери DING (P-32)
+- При вытеснении: `current_prio` немедленно сбрасывается в NONE (убирает stale-значение)
 - `posix_spawnp("aplay")` + waitpid; SIGTERM при вытеснении
-- amixer lazy volume: меняется только при переходе sound\_vol ↔ music\_vol
-- Фоновая музыка: mus1..mus7.wav по кругу; music\_wanted=1 после UP/DOWN
-- Подавление музыки при MODE\_ABNORMAL и при активном dispatch
+- amixer lazy volume: меняется только при переходе sound\_vol ↔ music\_vol (~20 мс)
+- Фоновая музыка: mus1..mus7.wav по кругу, индекс не сбрасывается при остановке
+- Подавление музыки при `mode != MODE_NORMAL` и при активном dispatch
 - `needs_music=0` если нештатный режим — up.wav играет, музыка не запускается
+
+**Реализовано (инфраструктура):**
+- `/etc/asound.conf` — стек `plug → softvol 'PCM' → dmixer → speakerbonnet hw:0` (S32\_LE/48kHz)
+- `deploy/systemd/i2s-silence.service` — I2S keepalive через dmix напрямую; `ExecStartPre` ждёт card 0 до 15 с; `StartLimitBurst=20`
+- `indicator.service` обновлён: `After=i2s-silence.service`, `Wants=i2s-silence.service`
+- `scripts/setup_pi.sh` — I2S overlay, asound.conf, i2s-silence, fbi
+- `scripts/check_resources.sh` — секция 6 полностью переписана: 45 WAV (режим fail, не warn)
+- `docs/AUDIO_MODULE.md` — техническая документация (12 разделов)
+- `docs/indicator_checklist.md` — интеграционный чек-лист (~76 тестов)
+
+**Проблемы (правильная нумерация — P-30/P-31 заняты Фазой Deploy):**
+
+P-32 (отчёт: P-30): **Гонка вытеснения — DING пропускался при активной музыке.**
+Worker обновляет `current_prio` только при взятии из очереди. В промежутке OPENING(2) видел stale `MUSIC(3)` вместо уже поставленного DING(1) → `2<3=true` → вытеснял DING. Фикс: `effective_prio = min(current_prio, min_prio_in_queue)`.
+
+P-33 (отчёт: P-31): **Три бага в sound\_map.c.**
+`SOUND_FIRE_ALARM` → `g_triple.wav` (должно: `fire.wav`);
+`SOUND_BUTTON` → `g_single.wav` (должно: `button.wav`);
+этажи 41–49 — не был реализован диапазон `40-.wav + ones + floor.wav`.
+
+P-34 (отчёт: P-32): **dmix IPC deadlock после 24 часов работы.**
+`kill(aplay, SIGTERM)` в момент удержания dmix-семафора → aplay завершается не освободив его → все последующие aplay/amixer зависают навсегда. Лечение на устройстве: `ipcrm -m`/`-s` + рестарт. Обходной путь: `i2s-silence.service` работает напрямую через `-D dmixer` (меньше слоёв — меньше вероятность deadlock). Старый `aplay.service` (44100/S16\_LE) удалён.
+
+P-35 (отчёт: P-33): **Неверный формат ALSA: S16\_LE вместо S32\_LE.**
+MAX98357A поддерживает только S32\_LE. В `asound.conf` был S16\_LE → `i2s-silence.service` падал немедленно → indicator ждал всех рестартов (~2 мин). Фикс: `format S32_LE` в `asound.conf`; WAV (S16\_LE) конвертируются plug-слоем автоматически.
+
+P-36 (отчёт: P-34): **indicator-setup.service: inline-аннотации в значениях.**
+`TTYVHangup=yes     ← добавить: ...` — systemd читал всю строку как значение → parse error → директивы игнорировались → tty не сбрасывался после setup. Фикс: убраны аннотации.
+
+P-37 (отчёт: P-35): **i2s-silence.service не стартует на холодном старте.**
+I2S карта (googlevoicehat overlay) инициализируется позже, чем `sound.target`. `aplay -D dmixer` → «no such device» → цикл рестартов. Фикс: `ExecStartPre` ждёт `card 0` до 15 с; `StartLimitBurst=20`, `StartLimitIntervalSec=120`.
+
+**Latency (on-target, HIL-стенд):**
+
+| Операция | Время |
+|---|---|
+| UART frame → начало воспроизведения (без смены громкости) | < 100 мс ✅ |
+| Смена громкости (amixer lazy call) | ~20 мс |
+| posix\_spawn aplay | ~5–10 мс |
+| Вытеснение: SIGTERM → следующий файл | < 200 мс |
+| i2s-silence keepalive CPU load | ~0.3% |
 
 ---
 

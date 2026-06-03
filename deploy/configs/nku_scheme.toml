@@ -52,7 +52,7 @@ possible_values = [
 "100%"
 ]
 default = "0%"
-current = "25%"
+current = "50%"
 should_sync = "true"
 
 [loadcapacity]
@@ -76,6 +76,6 @@ possible_values = [
 "1600кг 21чел.",
 ]
 default = "СКРЫТО"
-current = "400кг 5чел."
+current = "1150кг 15чел."
 should_sync = "true"
 

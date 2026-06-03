@@ -274,6 +274,7 @@ just pi::logs-ingest      # journalctl -u media-ingest -f
 just pi::logs-tail [n]    # последние N строк обоих сервисов (default 50)
 just pi::status           # статус всех сервисов
 just pi::restart          # перезапустить indicator
+just pi::restart-audio    # перезапустить i2s-silence.service (при зависании dmix)
 just pi::smoke            # smoke test после деплоя
 just pi::check-resources  # валидация 79 ресурсов, конфигов, bind-монтов
 just pi::test-audio       # проверить аудио (aplay тестового WAV)
@@ -416,3 +417,6 @@ build/pi-debug/              ← debug-бинари (-g3 -O0)
 | `indicator.service: Failed with result 'timeout'` при stop | dbus-daemon вне pgroup omxplayer | Ожидаемо (P-24), не блокирует; исправить в Deploy v2 |
 | Видео зависает после длительного простоя | VideoCore IV dormant state | `renderer_keepalive()` вызывается из watchdog tick — уже реализовано |
 | `just pi::dump` — порт хардкодирован | TODO в pi.just | Временно: /dev/ttyAMA0 115200 работает на реальном устройстве |
+| Звук пропал, aplay зависает без вывода | dmix IPC deadlock (P-34): aplay убит в момент удержания семафора | `sudo killall -9 aplay && ipcs -m | awk 'NR>3 && $3=="pi"' | xargs -r ipcrm -m && just pi::restart-audio` |
+| `i2s-silence.service` падает с кодом 1 при старте | I2S карта ещё не инициализирована (P-37) | Убедиться что в service есть `ExecStartPre` ожидающий card 0; `just pi::setup-pi` устанавливает правильный unit |
+| Щелчки при каждом звуке | Нет I2S keepalive | `just pi::restart-audio` — проверить что `i2s-silence.service` active |
