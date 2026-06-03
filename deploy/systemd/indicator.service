@@ -1,7 +1,7 @@
 [Unit]
 Description=Lift Indicator Daemon
-After=sound.target indicator-setup.service
-Wants=sound.target indicator-setup.service
+After=sound.target indicator-setup.service i2s-silence.service
+Wants=sound.target indicator-setup.service i2s-silence.service
 
 [Service]
 Type=simple

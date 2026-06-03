@@ -1,0 +1,25 @@
+[Unit]
+Description=I2S clock keepalive (silence playback via dmixer)
+After=sound.target
+Wants=sound.target
+# Разрешить больше ретраев: I2S карта может инициализироваться
+# с задержкой до 10 с после sound.target на Pi Zero 2W
+StartLimitBurst=20
+StartLimitIntervalSec=120
+
+[Service]
+Type=simple
+User=pi
+# Ждать появления card 0 перед открытием dmix (googlevoicehat I2S карта
+# инициализируется асинхронно после sound.target)
+ExecStartPre=/bin/bash -c \
+    'for i in $(seq 15); do aplay -l 2>/dev/null | grep -q "card 0" && exit 0; sleep 1; done; \
+     echo "i2s-silence: card 0 not ready after 15s" >&2; exit 1'
+# -D dmixer: напрямую в dmix, без plug/softvol (меньше слоёв → ниже риск deadlock при SIGTERM)
+# rate/format/channels ДОЛЖНЫ точно совпадать со slave в pcm.dmixer (asound.conf)
+ExecStart=/usr/bin/aplay -D dmixer -t raw -r 48000 -c 2 -f S32_LE /dev/zero
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

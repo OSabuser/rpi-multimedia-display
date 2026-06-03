@@ -225,8 +225,21 @@ deploy-systemd:
     echo "  📤  Deploying systemd units to {{_pi}}..."
     rsync -avz --progress deploy/systemd/ "{{_pi}}:/tmp/indicator-systemd/"
     ssh "{{_pi}}" "sudo cp /tmp/indicator-systemd/* /etc/systemd/system/ && \
-                   sudo systemctl daemon-reload"
-    echo "  ✅  systemd units deployed"
+                   sudo systemctl daemon-reload && \
+                   \
+                   if sudo systemctl is-enabled aplay.service &>/dev/null; then \
+                       sudo systemctl disable --now aplay.service && \
+                       echo '  🔄  Migrated: aplay.service → i2s-silence.service'; \
+                   fi && \
+                   \
+                   sudo systemctl enable i2s-silence.service \
+                       indicator.service \
+                       indicator-setup.service \
+                       indicator-firstboot.service \
+                       2>/dev/null || true"
+    echo "  ✅  systemd units deployed and enabled"
+    echo "  ℹ️   Перезапустить keepalive: just pi::restart-audio"
+    echo "  ℹ️   Перезапустить всё:       just pi::restart"
 
 [doc('Задеплоить скрипты (run_setup.sh, first_boot.sh, smoke_test.sh, check_resources.sh)')]
 [group('deploy')]
@@ -418,6 +431,17 @@ deploy-debug:
 restart:
     ssh "{{_pi}}" "sudo systemctl restart indicator.service"
     @echo "  ✅  indicator restarted"
+
+[doc('Перезапустить только I2S keepalive (без остановки indicator)')]
+[group('control')]
+restart-audio:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "  🔊  Restarting I2S keepalive..."
+    ssh "{{_pi}}" "sudo systemctl restart i2s-silence.service"
+    ssh "{{_pi}}" "systemctl is-active i2s-silence.service && \
+                   echo '  ✅  i2s-silence.service active' || \
+                   echo '  ❌  i2s-silence.service failed — check: journalctl -u i2s-silence'"
 
 [doc('Статус всех сервисов индикатора')]
 [group('control')]

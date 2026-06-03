@@ -18,8 +18,10 @@ TTYPath=/dev/tty1
 StandardInput=tty
 StandardOutput=tty
 StandardError=journal
-TTYVHangup=yes     ← добавить: сбрасывает tty после завершения сервиса
-TTYReset=yes       ← добавить: восстанавливает настройки tty
+# Сбрасывает tty после завершения сервиса
+TTYVHangup=yes
+# Восстанавливает настройки tty
+TTYReset=yes
 
 ExecStart=/home/pi/indicator/scripts/run_setup.sh
 

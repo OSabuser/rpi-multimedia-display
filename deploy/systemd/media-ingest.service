@@ -1,14 +1,18 @@
 [Unit]
 Description=Media Ingest Daemon (USB video replacement)
 After=local-fs.target
+# Phase 7: не запускать если бинарь ещё не задеплоен
+ConditionPathExists=/home/pi/indicator/media_ingest
 
 [Service]
 Type=simple
 User=pi
 WorkingDirectory=/home/pi/indicator
-ExecStart=/home/pi/indicator/media_ingest --config=/home/pi/indicator/configs/device/pizero.ini
-Restart=always
-RestartSec=5
+ExecStart=/home/pi/indicator/media_ingest --config=/data/pi_nku_configs/media_ingest.toml
+# on-failure: не перезапускать при штатном выходе (код 0)
+# Предотвращает crash-loop когда конфиг ещё не создан (Phase 7)
+Restart=on-failure
+RestartSec=10
 StandardOutput=journal
 StandardError=journal
 

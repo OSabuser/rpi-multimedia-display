@@ -130,7 +130,7 @@ pcm.dmixer {
         buffer_size 8192
         rate        48000
         channels    2
-        format      S16_LE
+        format      S32_LE
     }
 }
 
@@ -195,7 +195,7 @@ StartLimitIntervalSec=30
 [Service]
 Type=simple
 User=pi
-ExecStart=/usr/bin/aplay -D dmixer -t raw -r 48000 -c 2 -f S16_LE /dev/zero
+ExecStart=/usr/bin/aplay -D dmixer -t raw -r 48000 -c 2 -f S32_LE /dev/zero
 Restart=always
 RestartSec=2
 
