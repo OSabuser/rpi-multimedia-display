@@ -22,8 +22,8 @@ DATA="/data"
 step "Обновление системы (Buster archived repos)"
 
 tee /etc/apt/sources.list > /dev/null <<'SOURCES'
-deb http://archive.debian.org/debian buster main contrib non-free
-deb http://archive.debian.org/debian-security buster/updates main contrib non-free
+deb https://legacy.raspbian.org/raspbian/ buster main contrib non-free rpi
+# deb-src https://legacy.raspbian.org/raspbian/ buster main contrib non-free rpi
 SOURCES
 
 tee /etc/apt/sources.list.d/raspi.list > /dev/null <<'SOURCES'
@@ -34,7 +34,7 @@ tee /etc/apt/apt.conf.d/99archive > /dev/null <<'CONF'
 Acquire::Check-Valid-Until "false";
 CONF
 
-apt-get update -q
+apt-get --allow-releaseinfo-change update -q
 apt-get full-upgrade -y -q
 ok "System updated"
 
@@ -44,7 +44,8 @@ step "Установка пакетов"
 apt-get install -y -q \
     omxplayer \
     ffmpeg \
-    alsa-utils \
+    alsa-utils fbi \
+    imagemagick \
     libpng16-16 \
     exfat-utils \
     exfat-fuse \
@@ -207,6 +208,19 @@ systemctl daemon-reload
 systemctl enable i2s-silence.service
 ok "i2s-silence.service installed and enabled"
 
+
+
+step "Добавление pi в группы video и tty (для fbi)"
+usermod -a -G video pi
+usermod -a -G tty pi
+usermod -a -G dialout pi
+ok "pi added to video, dialout groups"
+
+step "Настройка sudoers для fbi (boot splash)"
+echo "pi ALL=(root) NOPASSWD: /usr/bin/fbi" > /etc/sudoers.d/indicator-fbi
+chmod 0440 /etc/sudoers.d/indicator-fbi
+ok "sudoers configured for fbi"
+
 # ─── 7. /data structure (мутабельные данные устройства) ──────────────────────
 
 step "Создание /data структуры"
@@ -264,7 +278,6 @@ mount --bind "$DATA/videos"         "$IND/videos"
 ok "Bind mounts active"
 
 # ─── 10. IPC FIFO (indicator ↔ media_ingest) ─────────────────────────────────
-
 step "Создание FIFO для IPC"
 cat > /etc/tmpfiles.d/indicator.conf << 'TMPFILES'
 p /run/indicator-media.fifo 0660 pi pi -
@@ -274,9 +287,9 @@ ok "IPC FIFO configured: /run/indicator-media.fifo"
 
 # ─── 11. Маскировка getty@tty1 (для TUI при старте) ──────────────────────────
 
-step "Маскировка getty@tty1"
-systemctl mask getty@tty1.service
-ok "getty@tty1 masked"
+#step "Маскировка getty@tty1"
+#systemctl mask getty@tty1.service
+#ok "getty@tty1 masked"
 
 # ─── Итог ─────────────────────────────────────────────────────────────────────
 
@@ -285,10 +298,44 @@ echo ""
 echo -e "  ${GREEN}${BOLD}Pi setup complete.${RESET}"
 echo ""
 echo "  Следующие шаги (с хоста):"
-echo "  1. just pi::deploy-resources   — PNG ресурсы → /data/resources/"
-echo "  2. just pi::deploy-sounds      — WAV звуки → /data/sounds/"
-echo "  3. just pi::deploy-configs     — конфиги → /data/pi_nku_configs/"
-echo "  4. just pi::deploy             — бинари + systemd units"
+echo "  4. just pi::deploy-full             — бинари + systemd units"
 echo "  5. just pi::restart"
 echo "  6. just pi::check-resources    — финальная проверка"
 echo ""
+
+# FIXME: непонятки с cmdline, маскированием getty@tty1
+# TODO: установка подключения к WLAN, включение SSH в raspi-config
+# TODO: user в dialout, display, tty!
+# TODO: локаль ru_UTF8, console-setup: 
+# LANG=ru_RU.UTF-8
+# LANGUAGE=
+# LC_CTYPE="ru_RU.UTF-8"
+# LC_NUMERIC="ru_RU.UTF-8"
+# LC_TIME="ru_RU.UTF-8"
+# LC_COLLATE="ru_RU.UTF-8"
+# LC_MONETARY="ru_RU.UTF-8"
+# LC_MESSAGES="ru_RU.UTF-8"
+# LC_PAPER="ru_RU.UTF-8"
+# LC_NAME="ru_RU.UTF-8"
+# LC_ADDRESS="ru_RU.UTF-8"
+# LC_TELEPHONE="ru_RU.UTF-8"
+# LC_MEASUREMENT="ru_RU.UTF-8"
+# LC_IDENTIFICATION="ru_RU.UTF-8"
+# LC_ALL=
+# pi@indicator-04:~ $ cat /etc/default/console-setup
+# CONFIGURATION FILE FOR SETUPCON
+
+# Consult the console-setup(5) manual page.
+
+#ACTIVE_CONSOLES="/dev/tty[1-6]"
+
+#CHARMAP="UTF-8"
+
+#CODESET="CyrSlav"
+#FONTFACE="Terminus"
+#FONTSIZE="14x28"
+
+#VIDEOMODE=
+
+# The following is an example how to use a braille font
+# FONT='lat9w-08.psf.gz brl-8x8.psf'

@@ -369,7 +369,7 @@ void test_ding_unknown_floor_uses_fallback(void)
     floor_t floor = make_floor(FLOOR_TYPE_UNKNOWN, 0);
     sound_map_resolve(SOUND_DING, floor, &seq);
     TEST_ASSERT_EQUAL_INT(1, seq.count);
-    TEST_ASSERT_EQUAL_STRING("g_single.wav", seq.files[0]);
+    TEST_ASSERT_EQUAL_STRING("g_triple.wav", seq.files[0]);
 }
 
 /* ─── sound_map_volume_percent ───────────────────────────────────────────── */

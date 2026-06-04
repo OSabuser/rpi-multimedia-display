@@ -5,13 +5,12 @@
 # Конфигурация: .env → PI_HOST, PI_USER, PI_DIR
 # =============================================================================
 
-BUILD_DIR := env('BUILD_DIR',  justfile_directory() / '..' / 'build')
-PI_HOST   := env('PI_HOST',   'indicator-01.local')
-PI_USER   := env('PI_USER',   'pi')
-PI_DIR    := env('PI_DIR',    '/home/pi/indicator')
-_pi       := PI_USER + "@" + PI_HOST
-
-JUST_MIN   := "1.36.0"
+BUILD_DIR := env('BUILD_DIR', justfile_directory() / '..' / 'build')
+PI_HOST := env('PI_HOST', 'indicator-01.local')
+PI_USER := env('PI_USER', 'pi')
+PI_DIR := env('PI_DIR', '/home/pi/indicator')
+_pi := PI_USER + "@" + PI_HOST
+JUST_MIN := "1.36.0"
 DOCKER_MIN := "24.0.0"
 
 set working-directory := '..'
@@ -68,8 +67,8 @@ check-deps:
     echo -e "${BOLD}  Checking host dependencies...${RESET}"
     echo ""
 
-    check_tool "just"   "just"   "{{JUST_MIN}}"
-    check_tool "docker" "docker" "{{DOCKER_MIN}}"
+    check_tool "just"   "just"   "{{ JUST_MIN }}"
+    check_tool "docker" "docker" "{{ DOCKER_MIN }}"
 
     if command -v ssh &>/dev/null; then ok "ssh found"
     else fail "ssh not found"; fi
@@ -97,8 +96,8 @@ setup-ssh:
     else
         echo "  ✅  SSH key already exists: $KEY"
     fi
-    echo "  📤  Copying key to {{_pi}}..."
-    ssh-copy-id -i "${KEY}.pub" "{{_pi}}"
+    echo "  📤  Copying key to {{ _pi }}..."
+    ssh-copy-id -i "${KEY}.pub" "{{ _pi }}"
     echo "  ✅  SSH key installed on Pi"
 
 [doc('Скопировать /opt/vc с Pi для Docker sysroot (один раз после setup-pi)')]
@@ -106,9 +105,9 @@ setup-ssh:
 fetch-sysroot:
     #!/usr/bin/env bash
     set -euo pipefail
-    echo "  📦  Fetching /opt/vc from {{_pi}}..."
+    echo "  📦  Fetching /opt/vc from {{ _pi }}..."
     rsync -av --delete \
-        "{{PI_USER}}@{{PI_HOST}}:/opt/vc/" \
+        "{{ PI_USER }}@{{ PI_HOST }}:/opt/vc/" \
         "build-env/pi-sysroot/opt/vc/"
     echo "  ✅  Sysroot ready: build-env/pi-sysroot/opt/vc/"
 
@@ -130,18 +129,9 @@ build-image:
 setup-pi:
     #!/usr/bin/env bash
     set -euo pipefail
-    echo "  🍓  Running setup_pi.sh on {{_pi}}..."
-    ssh "{{_pi}}" "sudo bash -s" < scripts/setup_pi.sh
+    echo "  🍓  Running setup_pi.sh on {{ _pi }}..."
+    ssh "{{ _pi }}" "sudo bash -s" < scripts/setup_pi.sh
     echo "  ✅  Pi setup complete"
-
-[doc('Одноразовая миграция существующей Pi на /data layout')]
-[group('setup')]
-migrate-data:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    echo "  🔄  Running migrate_data.sh on {{_pi}}..."
-    ssh "{{_pi}}" "sudo bash -s" < scripts/migrate_data.sh
-    echo "  ✅  Migration complete"
 
 [doc('Полная первичная настройка хоста: check-deps → setup-ssh → fetch-sysroot → build-image')]
 [group('setup')]
@@ -169,7 +159,7 @@ fetch-png-sysroot:
     set -euo pipefail
 
     DEST="build-env/pi-sysroot/usr"
-    PI="{{PI_USER}}@{{PI_HOST}}"
+    PI="{{ PI_USER }}@{{ PI_HOST }}"
 
     echo "  📦  Checking libpng-dev on Pi..."
     ssh "${PI}" "dpkg -s libpng-dev &>/dev/null || sudo apt-get install -y libpng-dev zlib1g-dev"
@@ -202,17 +192,20 @@ fetch-png-sysroot:
 [doc('Установить gdbserver на Pi (один раз)')]
 [group('setup')]
 setup-gdbserver:
-    ssh "{{_pi}}" "sudo apt-get install -y gdbserver && gdbserver --version"
+    ssh "{{ _pi }}" "sudo apt-get install -y gdbserver && gdbserver --version"
     @echo "  ✅  gdbserver installed on Pi"
 
+[doc('Включить все systemd-сервисы индикатора (один раз после deploy-systemd)')]
+[group('setup')]
 enable-services:
     #!/usr/bin/env bash
     set -euo pipefail
-    ssh "{{_pi}}" "sudo systemctl enable \
+    ssh "{{ _pi }}" "sudo systemctl enable \
         indicator.service \
         indicator-setup.service \
         indicator-firstboot.service"
     echo "  ✅  Services enabled"
+
 # =============================================================================
 # ГРУППА: deploy — деплой на Pi
 # =============================================================================
@@ -222,9 +215,9 @@ enable-services:
 deploy-systemd:
     #!/usr/bin/env bash
     set -euo pipefail
-    echo "  📤  Deploying systemd units to {{_pi}}..."
-    rsync -avz --progress deploy/systemd/ "{{_pi}}:/tmp/indicator-systemd/"
-    ssh "{{_pi}}" "sudo cp /tmp/indicator-systemd/* /etc/systemd/system/ && \
+    echo "  📤  Deploying systemd units to {{ _pi }}..."
+    rsync -avz --progress deploy/systemd/ "{{ _pi }}:/tmp/indicator-systemd/"
+    ssh "{{ _pi }}" "sudo cp /tmp/indicator-systemd/* /etc/systemd/system/ && \
                    sudo systemctl daemon-reload && \
                    \
                    if sudo systemctl is-enabled aplay.service &>/dev/null; then \
@@ -246,15 +239,15 @@ deploy-systemd:
 deploy-scripts:
     #!/usr/bin/env bash
     set -euo pipefail
-    echo "  📤  Deploying scripts to {{_pi}}:{{PI_DIR}}/scripts/..."
-    ssh "{{_pi}}" "mkdir -p {{PI_DIR}}/scripts"
+    echo "  📤  Deploying scripts to {{ _pi }}:{{ PI_DIR }}/scripts/..."
+    ssh "{{ _pi }}" "mkdir -p {{ PI_DIR }}/scripts"
     rsync -avz --progress \
         scripts/smoke_test.sh \
         scripts/check_resources.sh \
         scripts/run_setup.sh \
         scripts/first_boot.sh \
-        "{{_pi}}:{{PI_DIR}}/scripts/"
-    ssh "{{_pi}}" "chmod +x {{PI_DIR}}/scripts/*.sh"
+        "{{ _pi }}:{{ PI_DIR }}/scripts/"
+    ssh "{{ _pi }}" "chmod +x {{ PI_DIR }}/scripts/*.sh"
     echo "  ✅  Scripts deployed"
 
 [doc('Задеплоить только основные C-бинари: indicator + media_ingest (быстро)')]
@@ -262,15 +255,15 @@ deploy-scripts:
 deploy-bin:
     #!/usr/bin/env bash
     set -euo pipefail
-    if [ ! -f "{{BUILD_DIR}}/pi/indicator" ]; then
+    if [ ! -f "{{ BUILD_DIR }}/pi/indicator" ]; then
         echo "  ❌  Binaries not found. Run: just build::pi"
         exit 1
     fi
-    echo "  📤  Deploying binaries to {{_pi}}:{{PI_DIR}}..."
+    echo "  📤  Deploying binaries to {{ _pi }}:{{ PI_DIR }}..."
     rsync -avz --progress \
-        "{{BUILD_DIR}}/pi/indicator" \
-        "{{BUILD_DIR}}/pi/media_ingest" \
-        "{{_pi}}:{{PI_DIR}}/"
+        "{{ BUILD_DIR }}/pi/indicator" \
+        "{{ BUILD_DIR }}/pi/media_ingest" \
+        "{{ _pi }}:{{ PI_DIR }}/"
     echo "  ✅  Binaries deployed"
 
 [doc('Задеплоить диагностические утилиты (uart_rx_dump + MUp-rpi0)')]
@@ -278,18 +271,18 @@ deploy-bin:
 deploy-tools:
     #!/usr/bin/env bash
     set -euo pipefail
-    if [ ! -f "{{BUILD_DIR}}/pi/uart_rx_dump" ]; then
+    if [ ! -f "{{ BUILD_DIR }}/pi/uart_rx_dump" ]; then
         echo "  ❌  uart_rx_dump not found. Run: just build::pi-dump"
         exit 1
     fi
-    echo "  📤  Deploying tools to {{_pi}}:{{PI_DIR}}/tools/..."
-    ssh "{{_pi}}" "mkdir -p {{PI_DIR}}/tools"
+    echo "  📤  Deploying tools to {{ _pi }}:{{ PI_DIR }}/tools/..."
+    ssh "{{ _pi }}" "mkdir -p {{ PI_DIR }}/tools"
     rsync -avz --progress \
-        "{{BUILD_DIR}}/pi/uart_rx_dump" \
-        "{{_pi}}:{{PI_DIR}}/tools/"
+        "{{ BUILD_DIR }}/pi/uart_rx_dump" \
+        "{{ _pi }}:{{ PI_DIR }}/tools/"
     rsync -avz --progress \
         deploy/tools/MUp-rpi0 \
-        "{{_pi}}:{{PI_DIR}}/tools/"
+        "{{ _pi }}:{{ PI_DIR }}/tools/"
     echo "  ✅  Tools deployed"
 
 [doc('Задеплоить Rust-утилиты (pi_nku_sync, pi_nku_menu) → PI_DIR/')]
@@ -302,11 +295,11 @@ deploy-rust:
         echo "     Build from third_party/config_toolset/ and copy to deploy/bin/"
         exit 1
     fi
-    echo "  📤  Deploying Rust tools to {{_pi}}:{{PI_DIR}}/..."
+    echo "  📤  Deploying Rust tools to {{ _pi }}:{{ PI_DIR }}/..."
     rsync -avz --progress \
         deploy/bin/pi_nku_sync \
         deploy/bin/pi_nku_menu \
-        "{{_pi}}:{{PI_DIR}}/"
+        "{{ _pi }}:{{ PI_DIR }}/"
     echo "  ✅  Rust tools deployed"
 
 [doc('Задеплоить device-конфиги → /data/pi_nku_configs')]
@@ -314,8 +307,8 @@ deploy-rust:
 deploy-configs:
     #!/usr/bin/env bash
     set -euo pipefail
-    echo "  📤  Deploying configs to {{_pi}}:/data/pi_nku_configs/..."
-    rsync -avz --progress deploy/configs/ "{{_pi}}:/data/pi_nku_configs/"
+    echo "  📤  Deploying configs to {{ _pi }}:/data/pi_nku_configs/..."
+    rsync -avz --progress deploy/configs/ "{{ _pi }}:/data/pi_nku_configs/"
     echo "  ✅  Configs deployed"
 
 [doc('Задеплоить PNG-ресурсы → /data/resources')]
@@ -323,8 +316,8 @@ deploy-configs:
 deploy-resources:
     #!/usr/bin/env bash
     set -euo pipefail
-    echo "  📤  Syncing resources to {{_pi}}:/data/resources/..."
-    rsync -avz --progress deploy/resources/ "{{_pi}}:/data/resources/"
+    echo "  📤  Syncing resources to {{ _pi }}:/data/resources/..."
+    rsync -avz --progress deploy/resources/ "{{ _pi }}:/data/resources/"
     echo "  ✅  Resources deployed"
 
 [doc('Задеплоить WAV-звуки → /data/sounds')]
@@ -332,8 +325,8 @@ deploy-resources:
 deploy-sounds:
     #!/usr/bin/env bash
     set -euo pipefail
-    echo "  📤  Syncing sounds to {{_pi}}:/data/sounds/..."
-    rsync -avz --progress deploy/sounds/ "{{_pi}}:/data/sounds/"
+    echo "  📤  Syncing sounds to {{ _pi }}:/data/sounds/..."
+    rsync -avz --progress deploy/sounds/ "{{ _pi }}:/data/sounds/"
     echo "  ✅  Sounds deployed"
 
 [doc('Задеплоить boot splash → /boot/splash.png + PI_DIR/splash/')]
@@ -346,12 +339,12 @@ deploy-splash:
         echo "  ❌  $SPLASH not found"
         exit 1
     fi
-    echo "  📤  Deploying splash to {{_pi}}..."
-    rsync -avz "$SPLASH" "{{_pi}}:/tmp/splash_src.jpg"
-    ssh "{{_pi}}" "sudo convert /tmp/splash_src.jpg /boot/splash.png && \
+    echo "  📤  Deploying splash to {{ _pi }}..."
+    rsync -avz "$SPLASH" "{{ _pi }}:/tmp/splash_src.jpg"
+    ssh "{{ _pi }}" "sudo convert /tmp/splash_src.jpg /boot/splash.png && \
                    rm /tmp/splash_src.jpg"
-    ssh "{{_pi}}" "mkdir -p {{PI_DIR}}/splash"
-    rsync -avz "$SPLASH" "{{_pi}}:{{PI_DIR}}/splash/splash.jpg"
+    ssh "{{ _pi }}" "mkdir -p {{ PI_DIR }}/splash"
+    rsync -avz "$SPLASH" "{{ _pi }}:{{ PI_DIR }}/splash/splash.jpg"
     echo "  ✅  splash deployed"
 
 [doc('Задеплоить фоновое видео → /data/videos/output.mp4')]
@@ -365,8 +358,8 @@ deploy-video:
         echo "     Положи видеофайл в deploy/video/output.mp4"
         exit 1
     fi
-    echo "  📤  Deploying video to {{_pi}}:/data/videos/..."
-    rsync -avz --progress "$VIDEO" "{{_pi}}:/data/videos/output.mp4"
+    echo "  📤  Deploying video to {{ _pi }}:/data/videos/..."
+    rsync -avz --progress "$VIDEO" "{{ _pi }}:/data/videos/output.mp4"
     echo "  ✅  Video deployed"
 
 [doc('Быстрый деплой: бинари + скрипты + systemd + конфиги + Rust (без ресурсов и видео)')]
@@ -410,26 +403,26 @@ deploy-full:
 check-resources:
     #!/usr/bin/env bash
     set -euo pipefail
-    PI="{{PI_USER}}@{{PI_HOST}}"
+    PI="{{ PI_USER }}@{{ PI_HOST }}"
     echo "  🔍  Checking deployment on ${PI}..."
     echo ""
     scp scripts/check_resources.sh "${PI}:/tmp/check_resources.sh"
     ssh "${PI}" "bash /tmp/check_resources.sh --dir /data/resources"
 
-[doc('Задеплоить debug-бинарь для анализа краша')]
+[doc('Задеплоить debug сборку indicator для отладки на хосте')]
 [group('deploy')]
 deploy-debug:
-    rsync -avz "{{BUILD_DIR}}/pi-debug/indicator" "{{_pi}}:{{PI_DIR}}/indicator-debug"
+    rsync -avz "{{ BUILD_DIR }}/pi-debug/indicator" "{{ _pi }}:{{ PI_DIR }}/indicator-debug"
     @echo "  ✅  Debug binary deployed"
 
 # =============================================================================
 # ГРУППА: control — управление сервисами на Pi
 # =============================================================================
 
-[doc('Перезапустить indicator')]
+[doc('Перезапустить сервис indicator')]
 [group('control')]
 restart:
-    ssh "{{_pi}}" "sudo systemctl restart indicator.service"
+    ssh "{{ _pi }}" "sudo systemctl restart indicator.service"
     @echo "  ✅  indicator restarted"
 
 [doc('Перезапустить только I2S keepalive (без остановки indicator)')]
@@ -438,26 +431,26 @@ restart-audio:
     #!/usr/bin/env bash
     set -euo pipefail
     echo "  🔊  Restarting I2S keepalive..."
-    ssh "{{_pi}}" "sudo systemctl restart i2s-silence.service"
-    ssh "{{_pi}}" "systemctl is-active i2s-silence.service && \
+    ssh "{{ _pi }}" "sudo systemctl restart i2s-silence.service"
+    ssh "{{ _pi }}" "systemctl is-active i2s-silence.service && \
                    echo '  ✅  i2s-silence.service active' || \
                    echo '  ❌  i2s-silence.service failed — check: journalctl -u i2s-silence'"
 
 [doc('Статус всех сервисов индикатора')]
 [group('control')]
 status:
-    ssh "{{_pi}}" "systemctl status indicator.service media-ingest.service --no-pager"
+    ssh "{{ _pi }}" "systemctl status indicator.service media-ingest.service --no-pager"
 
-[doc('Запустить indicator')]
+[doc('Запустить сервис indicator')]
 [group('control')]
 start:
-    ssh "{{_pi}}" "sudo systemctl start indicator.service"
+    ssh "{{ _pi }}" "sudo systemctl start indicator.service"
     @echo "  ✅  indicator.service started"
 
-[doc('Остановить indicator')]
+[doc('Остановить сервис indicator')]
 [group('control')]
 stop:
-    ssh "{{_pi}}" "sudo systemctl stop indicator.service"
+    ssh "{{ _pi }}" "sudo systemctl stop indicator.service"
     @echo "  ⏹️   indicator.service stopped"
 
 # =============================================================================
@@ -467,17 +460,17 @@ stop:
 [doc('Хвост логов indicator в реальном времени')]
 [group('logs')]
 logs:
-    ssh "{{_pi}}" "journalctl -u indicator -f --no-pager"
+    ssh "{{ _pi }}" "journalctl -u indicator -f --no-pager"
 
 [doc('Хвост логов media-ingest')]
 [group('logs')]
 logs-ingest:
-    ssh "{{_pi}}" "journalctl -u media-ingest -f --no-pager"
+    ssh "{{ _pi }}" "journalctl -u media-ingest -f --no-pager"
 
 [doc('Показать последние N строк из обоих сервисов (default 50)')]
 [group('logs')]
 logs-tail n="50":
-    ssh "{{_pi}}" "journalctl -u indicator -u media-ingest -n {{n}} --no-pager"
+    ssh "{{ _pi }}" "journalctl -u indicator -u media-ingest -n {{ n }} --no-pager"
 
 # =============================================================================
 # ГРУППА: diag — диагностика UART и железа
@@ -485,44 +478,44 @@ logs-tail n="50":
 
 [doc('Запустить uart_rx_dump: остановить indicator, слушать фреймы, поднять обратно')]
 [group('diag')]
-dump:
+uart-dump:
     #!/usr/bin/env bash
     set -euo pipefail
-    DUMP="{{PI_DIR}}/tools/uart_rx_dump"
+    DUMP="{{ PI_DIR }}/tools/uart_rx_dump"
 
-    ssh "{{_pi}}" "test -f ${DUMP}" || {
+    ssh "{{ _pi }}" "test -f ${DUMP}" || {
         echo "  ❌  uart_rx_dump not found. Run: just build::pi-dump && just pi::deploy-tools"
         exit 1
     }
 
     echo "  ⏹️   Stopping indicator.service..."
-    ssh "{{_pi}}" "sudo systemctl stop indicator.service"
+    ssh "{{ _pi }}" "sudo systemctl stop indicator.service"
 
     echo "  🔍  Starting uart_rx_dump (Ctrl+C to stop)..."
     echo "  ─────────────────────────────────────────────"
 
     # trap: поднять indicator обратно при выходе (Ctrl+C или ошибка)
     trap 'echo ""; echo "  🔼  Restarting indicator.service..."; \
-          ssh "{{_pi}}" "sudo systemctl start indicator.service"; \
+          ssh "{{ _pi }}" "sudo systemctl start indicator.service"; \
           echo "  ✅  indicator restarted"' EXIT
 
     # TODO (Шаг 1): читать port/baudrate из /data/pi_nku_configs/pi_scheme.toml
-    ssh -t "{{_pi}}" "${DUMP} /dev/ttyAMA0 115200"
+    ssh -t "{{ _pi }}" "${DUMP} /dev/ttyAMA0 115200"
 
 [doc('Запустить uart_rx_dump без остановки indicator (только для наблюдения)')]
 [group('diag')]
-dump-passive:
+uart-dump-passive:
     #!/usr/bin/env bash
     set -euo pipefail
-    DUMP="{{PI_DIR}}/tools/uart_rx_dump"
-    ssh "{{_pi}}" "test -f ${DUMP}" || {
+    DUMP="{{ PI_DIR }}/tools/uart_rx_dump"
+    ssh "{{ _pi }}" "test -f ${DUMP}" || {
         echo "  ❌  uart_rx_dump not found."
         exit 1
     }
     echo "  ⚠️   indicator.service NOT stopped — порт занят, фреймы не придут"
     echo "  ℹ️   Используй just pi::dump для корректной диагностики"
     # TODO (Шаг 1): читать port/baudrate из /data/pi_nku_configs/pi_scheme.toml
-    ssh -t "{{_pi}}" "${DUMP} /dev/ttyAMA0 115200"
+    ssh -t "{{ _pi }}" "${DUMP} /dev/ttyAMA0 115200"
 
 # =============================================================================
 # ГРУППА: util — утилиты
@@ -531,17 +524,17 @@ dump-passive:
 [doc('SSH на Pi')]
 [group('util')]
 ssh:
-    ssh "{{_pi}}"
+    ssh "{{ _pi }}"
 
 [doc('Запустить smoke-тест после деплоя')]
 [group('util')]
-smoke:
-    ssh "{{_pi}}" "bash {{PI_DIR}}/scripts/smoke_test.sh"
+test-smoke:
+    ssh "{{ _pi }}" "bash {{ PI_DIR }}/scripts/smoke_test.sh"
 
 [doc('Проверить аудио на Pi (воспроизвести тестовый файл)')]
 [group('util')]
 test-audio:
-    ssh "{{_pi}}" "aplay /usr/share/sounds/alsa/Front_Left.wav"
+    ssh "{{ _pi }}" "aplay /usr/share/sounds/alsa/Front_Left.wav"
 
 [doc('Сгенерировать тестовое видео и воспроизвести на Pi')]
 [group('util')]
@@ -552,19 +545,19 @@ test-video:
     ffmpeg -f lavfi -i testsrc=duration=5:size=600x1024:rate=25 \
            -vcodec libx264 -pix_fmt yuv420p /tmp/indicator_test.mp4 -y 2>/dev/null
     echo "  📤  Copying to Pi..."
-    scp /tmp/indicator_test.mp4 "{{PI_USER}}@{{PI_HOST}}:/tmp/test.mp4"
+    scp /tmp/indicator_test.mp4 "{{ PI_USER }}@{{ PI_HOST }}:/tmp/test.mp4"
     echo "  ▶️   Playing on Pi (Ctrl+C to stop)..."
-    ssh "{{PI_USER}}@{{PI_HOST}}" "omxplayer --no-osd --win 0,0,600,1024 --layer 1 /tmp/test.mp4"
+    ssh "{{ PI_USER }}@{{ PI_HOST }}" "omxplayer --no-osd --win 0,0,600,1024 --layer 1 /tmp/test.mp4"
 
 [doc('Показать загрузку CPU/RAM на Pi')]
 [group('util')]
 top:
-    ssh "{{_pi}}" "top -bn1 | head -20"
+    ssh "{{ _pi }}" "top -bn1 | head -20"
 
 [doc('Показать свободное место на SD-карте')]
 [group('util')]
 df:
-    ssh "{{_pi}}" "df -h /"
+    ssh "{{ _pi }}" "df -h /"
 
 [doc('Скопировать образ SD-карты Pi (указать диск: just pi::backup-image /dev/disk4)')]
 [group('util')]
@@ -572,9 +565,9 @@ backup-image disk:
     #!/usr/bin/env bash
     set -euo pipefail
     OUT="indicator-base-$(date +%Y%m%d).img.gz"
-    echo "  💾  Creating image from {{disk}} → ${OUT}..."
+    echo "  💾  Creating image from {{ disk }} → ${OUT}..."
     echo "  ⚠️   Убедитесь что SD-карта вставлена и не примонтирована"
-    sudo dd if="{{disk}}" bs=4m status=progress | gzip > "${OUT}"
+    sudo dd if="{{ disk }}" bs=4m status=progress | gzip > "${OUT}"
     echo "  ✅  Image saved: ${OUT}"
 
 # =============================================================================
@@ -582,35 +575,35 @@ backup-image disk:
 # =============================================================================
 
 [doc('Открыть SSH-туннель и запустить gdbserver на Pi')]
-[group('util')]
+[group('diag')]
 gdbserver-start:
     #!/usr/bin/env bash
     set -euo pipefail
 
-    BINARY="{{PI_DIR}}/indicator-debug"
+    BINARY="{{ PI_DIR }}/indicator-debug"
     LOCAL_PORT=3333
     REMOTE_PORT=3333
 
     echo "  🔌  Checking indicator-debug on Pi..."
-    ssh "{{_pi}}" "test -f ${BINARY}" || {
+    ssh "{{ _pi }}" "test -f ${BINARY}" || {
         echo "  ❌  indicator-debug not found on Pi. Run: just pi::deploy-debug"
         exit 1
     }
 
     echo "  🔌  Stopping any existing gdbserver..."
-    ssh "{{_pi}}" "pkill -f gdbserver 2>/dev/null; true" || true
+    ssh "{{ _pi }}" "pkill -f gdbserver 2>/dev/null; true" || true
     sleep 1
 
     echo "  🚀  Starting gdbserver on Pi (port ${REMOTE_PORT})..."
-    ssh "{{_pi}}" "nohup gdbserver :${REMOTE_PORT} ${BINARY} > /tmp/gdbserver.log 2>&1 &"
+    ssh "{{ _pi }}" "nohup gdbserver :${REMOTE_PORT} ${BINARY} > /tmp/gdbserver.log 2>&1 &"
     sleep 1
 
-    if ! ssh "{{_pi}}" "pgrep -f gdbserver > /dev/null"; then
-        echo "  ❌  gdbserver failed to start. Check: ssh {{_pi}} cat /tmp/gdbserver.log"
+    if ! ssh "{{ _pi }}" "pgrep -f gdbserver > /dev/null"; then
+        echo "  ❌  gdbserver failed to start. Check: ssh {{ _pi }} cat /tmp/gdbserver.log"
         exit 1
     fi
     echo "  ✅  gdbserver running on Pi:${REMOTE_PORT}"
-    echo "  🔗  Tunnel: localhost:${LOCAL_PORT} → {{_pi}}:${REMOTE_PORT}"
+    echo "  🔗  Tunnel: localhost:${LOCAL_PORT} → {{ _pi }}:${REMOTE_PORT}"
     echo "  ℹ️   Keep this terminal open while debugging. Ctrl+C to stop."
     echo ""
     echo "GDBSERVER READY"
@@ -620,15 +613,15 @@ gdbserver-start:
         -o ServerAliveInterval=5 \
         -o ServerAliveCountMax=3 \
         -L "${LOCAL_PORT}:localhost:${REMOTE_PORT}" \
-        "{{_pi}}"
+        "{{ _pi }}"
 
 [doc('Остановить gdbserver на Pi')]
-[group('util')]
+[group('diag')]
 gdbserver-stop:
-    ssh "{{_pi}}" "pkill -f gdbserver 2>/dev/null; true" || true
+    ssh "{{ _pi }}" "pkill -f gdbserver 2>/dev/null; true" || true
     @echo "  ⏹️   gdbserver stopped"
 
 [doc('Смотреть stdout отлаживаемой программы')]
-[group('util')]
+[group('diag')]
 debug-output:
-    ssh "{{_pi}}" "tail -f /tmp/gdbserver.log"
+    ssh "{{ _pi }}" "tail -f /tmp/gdbserver.log"

@@ -3,6 +3,7 @@ build/
 
 # Конфиг с реальными данными (хосты, пароли)
 .env
+.cache/
 
 # Pi sysroot (копируется с Pi, не хранится в git)
 build-env/pi-sysroot/
@@ -29,3 +30,4 @@ CMakeFiles/
 cmake_install.cmake
 compile_commands.json
 
+__cmake_systeminformation/CMakeLists.txt
