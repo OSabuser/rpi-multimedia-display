@@ -247,6 +247,11 @@ mkdir -p \
     "$IND/sounds" \
     "$IND/videos"
 chown -R pi:pi "$IND"
+
+mkdir -p /mnt/usb
+chown pi:pi /mnt/usb
+ok "/mnt/usb created"
+
 ok "Application directories created"
 
 # ─── 9. Bind-монты в /etc/fstab ──────────────────────────────────────────────
@@ -280,10 +285,10 @@ ok "Bind mounts active"
 # ─── 10. IPC FIFO (indicator ↔ media_ingest) ─────────────────────────────────
 step "Создание FIFO для IPC"
 cat > /etc/tmpfiles.d/indicator.conf << 'TMPFILES'
-p /run/indicator-media.fifo 0660 pi pi -
+d /run/indicator 0755 pi pi -
 TMPFILES
 systemd-tmpfiles --create /etc/tmpfiles.d/indicator.conf
-ok "IPC FIFO configured: /run/indicator-media.fifo"
+ok "IPC directory configured: /run/indicator/"
 
 # ─── 11. Маскировка getty@tty1 (для TUI при старте) ──────────────────────────
 

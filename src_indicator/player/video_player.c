@@ -48,8 +48,6 @@ struct video_player_s
     char win_arg[WIN_ARG_MAX];
 };
 
-extern char **environ;
-
 /* ─── spawn_omxplayer ────────────────────────────────────────────────────── */
 
 static int spawn_omxplayer(video_player_t *p_vp)
@@ -100,8 +98,8 @@ video_player_t *video_player_open(const char *p_video_path, video_window_t windo
 
     p_vp->pid = -1;
 
-    (void) strncpy(p_vp->video_path, p_video_path, VIDEO_PATH_MAX - 1u);
-    p_vp->video_path[VIDEO_PATH_MAX - 1u] = '\0';
+    (void) strncpy(p_vp->video_path, p_video_path, VIDEO_PATH_MAX - 1U);
+    p_vp->video_path[VIDEO_PATH_MAX - 1U] = '\0';
 
     (void) snprintf(p_vp->win_arg, WIN_ARG_MAX, "%d,%d,%d,%d", window.x, window.y, window.width,
                     window.height);
@@ -163,14 +161,14 @@ void video_player_check_and_restart(video_player_t *p_vp)
     }
 
     int status;
-    pid_t r = waitpid(p_vp->pid, &status, WNOHANG);
+    pid_t res = waitpid(p_vp->pid, &status, WNOHANG);
 
-    if (r == 0)
+    if (res == 0)
     {
         return;
     }
 
-    if (r < 0)
+    if (res < 0)
     {
         if (errno == ECHILD)
         {
@@ -188,27 +186,59 @@ void video_player_check_and_restart(video_player_t *p_vp)
         if (WIFEXITED(status))
         {
             syslog(LOG_WARNING, "video_player: omxplayer exited code=%d pid=%d",
-                   WEXITSTATUS(status), (int) r);
+                   WEXITSTATUS(status), (int) res);
         }
         else if (WIFSIGNALED(status))
         {
             syslog(LOG_WARNING, "video_player: omxplayer killed signal=%d pid=%d", WTERMSIG(status),
-                   (int) r);
+                   (int) res);
         }
         else
         {
-            syslog(LOG_WARNING, "video_player: omxplayer stopped unexpectedly pid=%d", (int) r);
+            syslog(LOG_WARNING, "video_player: omxplayer stopped unexpectedly pid=%d", (int) res);
         }
         p_vp->pid = -1;
     }
 
-    const struct timespec backoff = {
+    const struct timespec BACKOFF = {
         .tv_sec  = 0,
         .tv_nsec = RESTART_BACKOFF_MS * 1000000L,
     };
-    (void) nanosleep(&backoff, NULL);
+    (void) nanosleep(&BACKOFF, NULL);
 
     (void) spawn_omxplayer(p_vp);
+}
+
+void video_player_replace(video_player_t *p_vp)
+{
+    if (p_vp == NULL || p_vp->pid <= 0)
+    {
+        return;
+    }
+
+    syslog(LOG_NOTICE, "video_player: replace — killing pgid=%d for video reload", (int) p_vp->pid);
+
+    /*
+     * SIGKILL к process group omxplayer (bash + omxplayer.bin).
+     *
+     * waitpid() здесь НЕ вызывается намеренно:
+     * SIGCHLD уже летит в signalfd poll-цикла indicator.
+     * handle_signal() → video_player_check_and_restart() →
+     *   waitpid(p_vp->pid, WNOHANG) → spawn_omxplayer() с тем же путём
+     *   (к этому моменту /data/videos/output.mp4 уже заменён rename()).
+     *
+     * Сброс pid до завершения waitpid() сломал бы watchdog:
+     * check_and_restart() возвращается немедленно при pid <= 0.
+     */
+    if (killpg(p_vp->pid, SIGKILL) < 0)
+    {
+        /* ESRCH: group уже не существует — нормально */
+        if (errno != ESRCH)
+        {
+            syslog(LOG_WARNING, "video_player: replace killpg pgid=%d: %s", (int) p_vp->pid,
+                   strerror(errno));
+        }
+    }
 }
 
 int video_player_get_pid(const video_player_t *p_vp)

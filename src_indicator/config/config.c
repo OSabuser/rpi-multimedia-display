@@ -503,6 +503,9 @@ static void renderer_config_set_defaults(renderer_config_t *p_cfg)
     p_cfg->arrow_y       = 745;
     p_cfg->weight_x      = 333;
     p_cfg->weight_y      = 37;
+    /* Нижняя полоса уведомлений 600×150 px; экран 600×1024 → y = 1024 − 150 = 874 */
+    p_cfg->notif_x = 0;
+    p_cfg->notif_y = 874;
 }
 
 int renderer_config_load(const char *p_path, renderer_config_t *p_cfg)
@@ -634,6 +637,17 @@ int renderer_config_load(const char *p_path, renderer_config_t *p_cfg)
             else if (strcmp(key, "y") == 0)
             {
                 p_cfg->weight_y = atoi(val);
+            }
+        }
+        else if (strcmp(section, "slot.notification") == 0)
+        {
+            if (strcmp(key, "x") == 0)
+            {
+                p_cfg->notif_x = atoi(val);
+            }
+            else if (strcmp(key, "y") == 0)
+            {
+                p_cfg->notif_y = atoi(val);
             }
         }
         /* Неизвестные секции/ключи — молча игнорируются */

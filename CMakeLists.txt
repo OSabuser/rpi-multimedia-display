@@ -31,13 +31,13 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # ─── Domain-библиотека (platform-free, тестируется на хосте) ─────────────────
 
 add_library(indicator_domain STATIC
-    src/protocol/parser.c
-    src/domain/floor.c
-    src/domain/sound_map.c
-    src/domain/state.c
-    src/config/config.c
+    src_indicator/protocol/parser.c
+    src_indicator/domain/floor.c
+    src_indicator/domain/sound_map.c
+    src_indicator/domain/state.c
+    src_indicator/config/config.c
 )
-target_include_directories(indicator_domain PUBLIC src/)
+target_include_directories(indicator_domain PUBLIC src_indicator/)
 apply_warnings(indicator_domain)
 
 # ─── Transport-библиотека (uart.c — компилируется и на хосте, и на Pi) ───────
@@ -47,9 +47,9 @@ apply_warnings(indicator_domain)
 # через pipe() без реального UART-устройства.
 
 add_library(indicator_transport STATIC
-    src/transport/uart.c
+    src_indicator/transport/uart.c
 )
-target_include_directories(indicator_transport PUBLIC src/)
+target_include_directories(indicator_transport PUBLIC src_indicator/)
 target_link_libraries(indicator_transport PUBLIC indicator_domain)
 apply_warnings(indicator_transport)
 
@@ -77,7 +77,7 @@ if(INDICATOR_BUILD_TESTS)
     foreach(TEST_NAME ${INDICATOR_DOMAIN_TEST_SOURCES})
         add_executable(${TEST_NAME} tests/${TEST_NAME}.c)
         target_link_libraries(${TEST_NAME} PRIVATE indicator_domain unity)
-        target_include_directories(${TEST_NAME} PRIVATE src/)
+        target_include_directories(${TEST_NAME} PRIVATE src_indicator/)
         add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
         apply_warnings(${TEST_NAME})
     endforeach()
@@ -85,7 +85,7 @@ if(INDICATOR_BUILD_TESTS)
     # Тест transport-слоя (Фаза 2)
     add_executable(test_uart tests/test_uart.c)
     target_link_libraries(test_uart PRIVATE indicator_transport unity)
-    target_include_directories(test_uart PRIVATE src/)
+    target_include_directories(test_uart PRIVATE src_indicator/)
     add_test(NAME test_uart COMMAND test_uart)
     apply_warnings(test_uart)
 endif()
@@ -98,12 +98,12 @@ if(INDICATOR_PLATFORM_DISPMANX)
     add_subdirectory(tools)
 
     add_executable(indicator
-        src/main.c
-        src/audio/audio.c
-        src/player/video_player.c
-        src/media/media_ipc.c
+        src_indicator/main.c
+        src_indicator/audio/audio.c
+        src_indicator/player/video_player.c
+        src_indicator/media/media_ipc.c
     )
-    target_include_directories(indicator PRIVATE src)
+    target_include_directories(indicator PRIVATE src_indicator)
     target_link_libraries(indicator
         PRIVATE
             indicator_domain

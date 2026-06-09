@@ -10,6 +10,16 @@
 #   Z=4  DIGIT_RIGHT (chars/N.png, 202×346) — fast_update
 #   Z=4  ARROW       (arrows/*.png, 188×209) — fast_update
 #   Z=5  NOTIFICATION (Фаза 7)
+# Экран 600×1024:
+#     ┌──────────────┐ y=0
+#     │   WEIGHT     │ y=37   (59px высота)
+#     │              │
+#     │ DIGIT DIGIT  │ y=675  (346px высота)
+#     │   ARROW      │ y=745  (209px высота → до ~954)
+#     │              │
+#     ├──────────────┤ y=874  ← SPRITE_NOTIFICATION начинается здесь
+#     │ NOTIFICATION │        (PNG 600×150px)
+#     └──────────────┘ y=1024
 
 [renderer]
 resources_dir = /data/resources
@@ -29,3 +39,7 @@ y = 745
 [slot.weight]
 x = 333
 y = 27
+
+[slot.notification]
+x = 0
+y = 874

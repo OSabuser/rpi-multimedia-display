@@ -1,321 +1,28 @@
 .
 ├── bootstrap.sh
 ├── build
-│   ├── host
-│   │   ├── cmake_install.cmake
-│   │   ├── CMakeCache.txt
-│   │   ├── CMakeFiles
-│   │   │   ├── 3.28.3
-│   │   │   │   ├── CMakeCCompiler.cmake
-│   │   │   │   ├── CMakeDetermineCompilerABI_C.bin
-│   │   │   │   ├── CMakeSystem.cmake
-│   │   │   │   └── CompilerIdC
-│   │   │   ├── cmake.check_cache
-│   │   │   ├── CMakeConfigureLog.yaml
-│   │   │   ├── CMakeDirectoryInformation.cmake
-│   │   │   ├── indicator_domain.dir
-│   │   │   │   ├── build.make
-│   │   │   │   ├── cmake_clean_target.cmake
-│   │   │   │   ├── cmake_clean.cmake
-│   │   │   │   ├── compiler_depend.internal
-│   │   │   │   ├── compiler_depend.make
-│   │   │   │   ├── compiler_depend.ts
-│   │   │   │   ├── depend.make
-│   │   │   │   ├── DependInfo.cmake
-│   │   │   │   ├── flags.make
-│   │   │   │   ├── link.txt
-│   │   │   │   ├── progress.make
-│   │   │   │   └── src
-│   │   │   ├── indicator_transport.dir
-│   │   │   │   ├── build.make
-│   │   │   │   ├── cmake_clean_target.cmake
-│   │   │   │   ├── cmake_clean.cmake
-│   │   │   │   ├── compiler_depend.internal
-│   │   │   │   ├── compiler_depend.make
-│   │   │   │   ├── compiler_depend.ts
-│   │   │   │   ├── depend.make
-│   │   │   │   ├── DependInfo.cmake
-│   │   │   │   ├── flags.make
-│   │   │   │   ├── link.txt
-│   │   │   │   ├── progress.make
-│   │   │   │   └── src
-│   │   │   ├── Makefile.cmake
-│   │   │   ├── Makefile2
-│   │   │   ├── pkgRedirects
-│   │   │   ├── progress.marks
-│   │   │   ├── TargetDirectories.txt
-│   │   │   ├── test_config.dir
-│   │   │   │   ├── build.make
-│   │   │   │   ├── cmake_clean.cmake
-│   │   │   │   ├── compiler_depend.internal
-│   │   │   │   ├── compiler_depend.make
-│   │   │   │   ├── compiler_depend.ts
-│   │   │   │   ├── depend.make
-│   │   │   │   ├── DependInfo.cmake
-│   │   │   │   ├── flags.make
-│   │   │   │   ├── link.txt
-│   │   │   │   ├── progress.make
-│   │   │   │   └── tests
-│   │   │   ├── test_floor.dir
-│   │   │   │   ├── build.make
-│   │   │   │   ├── cmake_clean.cmake
-│   │   │   │   ├── compiler_depend.internal
-│   │   │   │   ├── compiler_depend.make
-│   │   │   │   ├── compiler_depend.ts
-│   │   │   │   ├── depend.make
-│   │   │   │   ├── DependInfo.cmake
-│   │   │   │   ├── flags.make
-│   │   │   │   ├── link.txt
-│   │   │   │   ├── progress.make
-│   │   │   │   └── tests
-│   │   │   ├── test_parser.dir
-│   │   │   │   ├── build.make
-│   │   │   │   ├── cmake_clean.cmake
-│   │   │   │   ├── compiler_depend.internal
-│   │   │   │   ├── compiler_depend.make
-│   │   │   │   ├── compiler_depend.ts
-│   │   │   │   ├── depend.make
-│   │   │   │   ├── DependInfo.cmake
-│   │   │   │   ├── flags.make
-│   │   │   │   ├── link.txt
-│   │   │   │   ├── progress.make
-│   │   │   │   └── tests
-│   │   │   ├── test_sound_map.dir
-│   │   │   │   ├── build.make
-│   │   │   │   ├── cmake_clean.cmake
-│   │   │   │   ├── compiler_depend.internal
-│   │   │   │   ├── compiler_depend.make
-│   │   │   │   ├── compiler_depend.ts
-│   │   │   │   ├── depend.make
-│   │   │   │   ├── DependInfo.cmake
-│   │   │   │   ├── flags.make
-│   │   │   │   ├── link.txt
-│   │   │   │   ├── progress.make
-│   │   │   │   └── tests
-│   │   │   ├── test_state.dir
-│   │   │   │   ├── build.make
-│   │   │   │   ├── cmake_clean.cmake
-│   │   │   │   ├── compiler_depend.internal
-│   │   │   │   ├── compiler_depend.make
-│   │   │   │   ├── compiler_depend.ts
-│   │   │   │   ├── depend.make
-│   │   │   │   ├── DependInfo.cmake
-│   │   │   │   ├── flags.make
-│   │   │   │   ├── link.txt
-│   │   │   │   ├── progress.make
-│   │   │   │   └── tests
-│   │   │   ├── test_uart.dir
-│   │   │   │   ├── build.make
-│   │   │   │   ├── cmake_clean.cmake
-│   │   │   │   ├── compiler_depend.internal
-│   │   │   │   ├── compiler_depend.make
-│   │   │   │   ├── compiler_depend.ts
-│   │   │   │   ├── depend.make
-│   │   │   │   ├── DependInfo.cmake
-│   │   │   │   ├── flags.make
-│   │   │   │   ├── link.txt
-│   │   │   │   ├── progress.make
-│   │   │   │   └── tests
-│   │   │   └── unity.dir
-│   │   │       ├── build.make
-│   │   │       ├── cmake_clean_target.cmake
-│   │   │       ├── cmake_clean.cmake
-│   │   │       ├── compiler_depend.internal
-│   │   │       ├── compiler_depend.make
-│   │   │       ├── compiler_depend.ts
-│   │   │       ├── depend.make
-│   │   │       ├── DependInfo.cmake
-│   │   │       ├── flags.make
-│   │   │       ├── link.txt
-│   │   │       ├── progress.make
-│   │   │       └── tests
-│   │   ├── compile_commands.json
-│   │   ├── CTestTestfile.cmake
-│   │   ├── libindicator_domain.a
-│   │   ├── libindicator_transport.a
-│   │   ├── libunity.a
-│   │   ├── Makefile
-│   │   ├── test_config
-│   │   ├── test_floor
-│   │   ├── test_parser
-│   │   ├── test_sound_map
-│   │   ├── test_state
-│   │   ├── test_uart
-│   │   └── Testing
-│   │       └── Temporary
-│   │           ├── CTestCostData.txt
-│   │           ├── LastTest.log
-│   │           └── LastTestsFailed.log
 │   └── pi
 │       ├── cmake_install.cmake
 │       ├── CMakeCache.txt
 │       ├── CMakeFiles
-│       │   ├── 3.28.3
-│       │   │   ├── CMakeCCompiler.cmake
-│       │   │   ├── CMakeDetermineCompilerABI_C.bin
-│       │   │   ├── CMakeSystem.cmake
-│       │   │   └── CompilerIdC
-│       │   ├── cmake.check_cache
-│       │   ├── CMakeConfigureLog.yaml
-│       │   ├── CMakeDirectoryInformation.cmake
-│       │   ├── CMakeScratch
-│       │   ├── indicator_domain.dir
-│       │   │   ├── build.make
-│       │   │   ├── cmake_clean_target.cmake
-│       │   │   ├── cmake_clean.cmake
-│       │   │   ├── compiler_depend.make
-│       │   │   ├── compiler_depend.ts
-│       │   │   ├── depend.make
-│       │   │   ├── DependInfo.cmake
-│       │   │   ├── flags.make
-│       │   │   ├── link.txt
-│       │   │   ├── progress.make
-│       │   │   └── src
-│       │   ├── indicator_transport.dir
-│       │   │   ├── build.make
-│       │   │   ├── cmake_clean_target.cmake
-│       │   │   ├── cmake_clean.cmake
-│       │   │   ├── compiler_depend.make
-│       │   │   ├── compiler_depend.ts
-│       │   │   ├── depend.make
-│       │   │   ├── DependInfo.cmake
-│       │   │   ├── flags.make
-│       │   │   ├── link.txt
-│       │   │   ├── progress.make
-│       │   │   └── src
-│       │   ├── indicator.dir
-│       │   │   ├── build.make
-│       │   │   ├── cmake_clean.cmake
-│       │   │   ├── compiler_depend.make
-│       │   │   ├── compiler_depend.ts
-│       │   │   ├── depend.make
-│       │   │   ├── DependInfo.cmake
-│       │   │   ├── flags.make
-│       │   │   ├── link.txt
-│       │   │   ├── progress.make
-│       │   │   └── src
-│       │   ├── Makefile.cmake
-│       │   ├── Makefile2
-│       │   ├── pkgRedirects
-│       │   ├── progress.marks
-│       │   └── TargetDirectories.txt
 │       ├── compile_commands.json
 │       ├── indicator
 │       ├── libindicator_domain.a
 │       ├── libindicator_transport.a
 │       ├── Makefile
 │       ├── media_ingest
+│       ├── notif_test
 │       ├── platform
-│       │   └── dispmanx
-│       │       ├── cmake_install.cmake
-│       │       ├── CMakeFiles
-│       │       ├── libdispmanx_renderer.a
-│       │       └── Makefile
 │       ├── src_media_ingest
-│       │   ├── cmake_install.cmake
-│       │   ├── CMakeFiles
-│       │   │   ├── CMakeDirectoryInformation.cmake
-│       │   │   ├── media_ingest.dir
-│       │   │   └── progress.marks
-│       │   └── Makefile
 │       ├── tools
-│       │   ├── cmake_install.cmake
-│       │   ├── CMakeFiles
-│       │   │   ├── CMakeDirectoryInformation.cmake
-│       │   │   ├── progress.marks
-│       │   │   └── uart_rx_dump.dir
-│       │   └── Makefile
 │       └── uart_rx_dump
 ├── build-env
 │   ├── 2023-05-03-raspios-buster-armhf-lite.img
 │   ├── Dockerfile
 │   └── pi-sysroot
 │       ├── opt
-│       │   └── vc
-│       │       ├── bin
-│       │       ├── include
-│       │       ├── lib
-│       │       └── src
 │       ├── usr
-│       │   ├── include
-│       │   │   ├── png.h
-│       │   │   ├── pngconf.h
-│       │   │   ├── pnglibconf.h
-│       │   │   ├── zconf.h
-│       │   │   └── zlib.h
-│       │   └── lib
-│       │       └── arm-linux-gnueabihf
 │       └── vc
-│           ├── bin
-│           │   ├── containers_check_frame_int
-│           │   ├── containers_datagram_receiver
-│           │   ├── containers_datagram_sender
-│           │   ├── containers_dump_pktfile
-│           │   ├── containers_rtp_decoder
-│           │   ├── containers_stream_client
-│           │   ├── containers_stream_server
-│           │   ├── containers_test
-│           │   ├── containers_test_bits
-│           │   ├── containers_test_uri
-│           │   ├── containers_uri_pipe
-│           │   ├── dtmerge
-│           │   ├── dtoverlay
-│           │   ├── dtoverlay-post
-│           │   ├── dtoverlay-pre
-│           │   ├── dtparam -> dtoverlay
-│           │   ├── edidparser
-│           │   ├── mmal_vc_diag
-│           │   ├── raspistill
-│           │   ├── raspivid
-│           │   ├── raspividyuv
-│           │   ├── raspiyuv
-│           │   ├── tvservice
-│           │   ├── vcdbg
-│           │   ├── vcgencmd
-│           │   ├── vchiq_test
-│           │   ├── vcmailbox
-│           │   └── vcsmem
-│           ├── include
-│           │   ├── bcm_host.h
-│           │   ├── EGL
-│           │   ├── GLES
-│           │   ├── GLES2
-│           │   ├── IL
-│           │   ├── interface
-│           │   ├── KHR
-│           │   ├── vcinclude
-│           │   ├── VG
-│           │   └── WF
-│           ├── lib
-│           │   ├── libbcm_host.so
-│           │   ├── libbrcmEGL.so
-│           │   ├── libbrcmGLESv2.so
-│           │   ├── libbrcmOpenVG.so
-│           │   ├── libbrcmWFC.so
-│           │   ├── libcontainers.so
-│           │   ├── libdebug_sym_static.a
-│           │   ├── libdebug_sym.so
-│           │   ├── libdtovl.so
-│           │   ├── libEGL_static.a
-│           │   ├── libelftoolchain.so
-│           │   ├── libGLESv2_static.a
-│           │   ├── libkhrn_client.a
-│           │   ├── libkhrn_static.a
-│           │   ├── libmmal_components.so
-│           │   ├── libmmal_core.so
-│           │   ├── libmmal_util.so
-│           │   ├── libmmal_vc_client.so
-│           │   ├── libmmal.so
-│           │   ├── libopenmaxil.so
-│           │   ├── libvchiq_arm.so
-│           │   ├── libvchostif.a
-│           │   ├── libvcilcs.a
-│           │   ├── libvcos.so
-│           │   ├── libvcsm.so
-│           │   ├── pkgconfig
-│           │   └── plugins
-│           └── src
-│               └── hello_pi
 ├── cmake
 │   ├── Sanitizers.cmake
 │   ├── Toolchain-RPiZero2W.cmake
@@ -329,9 +36,9 @@
 │   ├── boot
 │   │   ├── cmdline.txt
 │   │   ├── config.txt
-│   │   ├── splash.jpg
-│   │   └── splash.png
+│   │   └── splash.jpg
 │   ├── configs
+│   │   ├── media_ingest.toml
 │   │   ├── menu_style.toml
 │   │   ├── nku_scheme.toml
 │   │   ├── pi_scheme.toml
@@ -339,96 +46,13 @@
 │   │   └── video.toml
 │   ├── resources
 │   │   ├── arrows
-│   │   │   ├── down.png
-│   │   │   └── up.png
 │   │   ├── BACK.png
 │   │   ├── chars
-│   │   │   ├── 0.png
-│   │   │   ├── 1.png
-│   │   │   ├── 10.png
-│   │   │   ├── 11.png
-│   │   │   ├── 12.png
-│   │   │   ├── 13.png
-│   │   │   ├── 14.png
-│   │   │   ├── 15.png
-│   │   │   ├── 16.png
-│   │   │   ├── 17.png
-│   │   │   ├── 18.png
-│   │   │   ├── 19.png
-│   │   │   ├── 2.png
-│   │   │   ├── 20.png
-│   │   │   ├── 21.png
-│   │   │   ├── 22.png
-│   │   │   ├── 23.png
-│   │   │   ├── 24.png
-│   │   │   ├── 25.png
-│   │   │   ├── 26.png
-│   │   │   ├── 27.png
-│   │   │   ├── 28.png
-│   │   │   ├── 29.png
-│   │   │   ├── 3.png
-│   │   │   ├── 30.png
-│   │   │   ├── 31.png
-│   │   │   ├── 32.png
-│   │   │   ├── 33.png
-│   │   │   ├── 34.png
-│   │   │   ├── 35.png
-│   │   │   ├── 36.png
-│   │   │   ├── 37.png
-│   │   │   ├── 4.png
-│   │   │   ├── 5.png
-│   │   │   ├── 6.png
-│   │   │   ├── 7.png
-│   │   │   ├── 8.png
-│   │   │   └── 9.png
 │   │   ├── modes
-│   │   │   ├── calling.png
-│   │   │   ├── evacuation.png
-│   │   │   ├── firealarm.png
-│   │   │   ├── fireman.png
-│   │   │   ├── inspection.png
-│   │   │   ├── loading.png
-│   │   │   ├── malfunction.png
-│   │   │   ├── misc
-│   │   │   │   ├── 0.png
-│   │   │   │   ├── 1.png
-│   │   │   │   ├── 2.png
-│   │   │   │   ├── 3.png
-│   │   │   │   ├── 4.png
-│   │   │   │   ├── 5.png
-│   │   │   │   ├── 6.png
-│   │   │   │   ├── 7.png
-│   │   │   │   ├── 8.png
-│   │   │   │   ├── 9.png
-│   │   │   │   └── BLANK_60%.png
-│   │   │   ├── overload.png
-│   │   │   ├── seismo.png
-│   │   │   └── talking.png
 │   │   ├── notifications
 │   │   ├── promos
-│   │   │   ├── 8_with_arrow.png
-│   │   │   ├── 8_without_arrow.png
-│   │   │   ├── P1_with_arrow.png
-│   │   │   ├── P1_with_mode.png
-│   │   │   └── P1_without_arrow.png
 │   │   ├── RULES.md
 │   │   └── weights
-│   │       ├── load_0.png
-│   │       ├── load_1.png
-│   │       ├── load_10.png
-│   │       ├── load_11.png
-│   │       ├── load_12.png
-│   │       ├── load_13.png
-│   │       ├── load_14.png
-│   │       ├── load_15.png
-│   │       ├── load_2.png
-│   │       ├── load_3.png
-│   │       ├── load_4.png
-│   │       ├── load_5.png
-│   │       ├── load_6.png
-│   │       ├── load_7.png
-│   │       ├── load_8.png
-│   │       └── load_9.png
 │   ├── sounds
 │   │   ├── 0.wav
 │   │   ├── 1.wav
@@ -479,6 +103,7 @@
 │   │   ├── s_open.wav
 │   │   └── up.wav
 │   ├── systemd
+│   │   ├── i2s-silence.service
 │   │   ├── indicator-firstboot.service
 │   │   ├── indicator-setup.service
 │   │   ├── indicator.service
@@ -491,21 +116,14 @@
 │       └── output.mp4
 ├── docs
 │   ├── DEV_ARCH.md
+│   ├── MEDIA_GUIDE.md
 │   ├── plan
-│   │   ├── ADD_DEPLOY_REPORT.md
 │   │   ├── MASTER_PLAN.md
-│   │   ├── PHASE_0_REPORT.md
-│   │   ├── PHASE_1_REPORT.md
-│   │   ├── PHASE_2_REPORT.md
-│   │   ├── PHASE_3_REPORT.md
-│   │   ├── PHASE_4_REPORT.md
+│   │   ├── PHASE_6_OLD.md
 │   │   ├── PHASE_DEPLOY_PLAN.md
-│   │   ├── PHASE_DEPLOY_REPORT.md
+│   │   ├── reports
 │   │   └── tests
-│   │       ├── audio_checklist.md
-│   │       └── display_checklist.md
 │   └── RPI_SYSROOT.md
-├── git_ops.sh
 ├── just
 │   ├── build.just
 │   ├── ci.just
@@ -515,24 +133,17 @@
 │   └── dispmanx
 │       ├── CMakeLists.txt
 │       ├── layers
-│       │   ├── bits.h
-│       │   ├── element_change.h
-│       │   ├── image.c
-│       │   ├── image.h
-│       │   ├── imageLayer.c
-│       │   ├── imageLayer.h
-│       │   ├── loadpng.c
-│       │   └── loadpng.h
 │       └── renderer_impl.c
-├── project_tree.txt
+├── project_trr.txt
 ├── README.md
 ├── scripts
 │   ├── check_resources.sh
 │   ├── first_boot.sh
+│   ├── gen_notifications.sh
 │   ├── run_setup.sh
 │   ├── setup_pi.sh
 │   └── smoke_test.sh
-├── src
+├── src_indicator
 │   ├── audio
 │   │   ├── audio.c
 │   │   ├── audio.h
@@ -567,7 +178,15 @@
 │       └── uart.h
 ├── src_media_ingest
 │   ├── CMakeLists.txt
-│   └── main.c
+│   ├── ffmpeg_runner.c
+│   ├── ffmpeg_runner.h
+│   ├── main.c
+│   ├── mounter.c
+│   ├── mounter.h
+│   ├── status_pipe.c
+│   ├── status_pipe.h
+│   ├── usb_watcher.c
+│   └── usb_watcher.h
 ├── tests
 │   ├── CMakeLists.txt
 │   ├── test_config.c
@@ -585,84 +204,21 @@
 │       ├── Cargo.lock
 │       ├── Cargo.toml
 │       ├── config_lib
-│       │   ├── Cargo.toml
-│       │   ├── examples
-│       │   │   ├── simple_config.toml
-│       │   │   └── simple.rs
-│       │   └── src
-│       │       ├── device_config.rs
-│       │       ├── lib.rs
-│       │       ├── serial_config.rs
-│       │       └── toml_parser.rs
 │       ├── Cross.toml
 │       ├── docs
-│       │   ├── build'n'deploy
-│       │   │   └── README.md
-│       │   └── vscode
-│       │       ├── Install.md
-│       │       └── vs_code_extensions_list.txt
 │       ├── logger
-│       │   ├── Cargo.toml
-│       │   ├── src
-│       │   │   ├── logger.rs
-│       │   │   └── main.rs
-│       │   ├── tests_output
-│       │   │   ├── uart_log_2025-12-10.txt
-│       │   │   └── uart_log_2025-12-11.txt
-│       │   └── TODO.md
 │       ├── menu_tui
-│       │   ├── assets
-│       │   │   └── style.toml
-│       │   ├── Cargo.toml
-│       │   ├── examples
-│       │   │   ├── simple_config.toml
-│       │   │   └── simple.rs
-│       │   ├── src
-│       │   │   ├── lib.rs
-│       │   │   ├── menu_navigation.rs
-│       │   │   ├── menu_process.rs
-│       │   │   ├── user_parameters.rs
-│       │   │   └── views
-│       │   └── TODO.md
 │       ├── MUp-arm
 │       ├── pi_nku_configs
-│       │   ├── menu_style.toml
-│       │   ├── nku_scheme.toml
-│       │   └── pi_scheme.toml
 │       ├── pi_nku_menu
-│       │   ├── assets
-│       │   │   └── style.toml
-│       │   ├── Cargo.toml
-│       │   └── src
-│       │       └── main.rs
 │       ├── pi_nku_sync
-│       │   ├── Cargo.toml
-│       │   └── src
-│       │       ├── main.rs
-│       │       ├── nku_client.rs
-│       │       └── serial_config.rs
 │       ├── protocol_lib
-│       │   ├── Cargo.toml
-│       │   ├── MU Protocol.md
-│       │   └── src
-│       │       ├── client.rs
-│       │       ├── inc_parser.rs
-│       │       ├── lib.rs
-│       │       └── mu_frame.rs
 │       ├── README.md
 │       └── target
-│           ├── arm-unknown-linux-gnueabihf
-│           │   ├── CACHEDIR.TAG
-│           │   └── release
-│           ├── CACHEDIR.TAG
-│           └── release
-│               ├── build
-│               ├── deps
-│               ├── examples
-│               └── incremental
 └── tools
     ├── CMakeLists.txt
+    ├── notif_test.c
     ├── README.md
     └── uart_rx_dump.c
 
-147 directories, 519 files
+61 directories, 161 files

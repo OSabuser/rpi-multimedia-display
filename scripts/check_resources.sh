@@ -305,11 +305,11 @@ echo ""
 
 
 # ─── 6.6 Boot splash ─────────────────────────────────────────────────────────
- 
+
 echo "── Boot splash ─────────────────────────────────────────"
 SPLASH_PATH="/home/pi/indicator/splash/splash.jpg"
 CHECKED=$((CHECKED + 1))
- 
+
 if [[ ! -f "$SPLASH_PATH" ]]; then
     fail "MISSING: splash.jpg → $SPLASH_PATH"
 elif [[ ! -s "$SPLASH_PATH" ]]; then
@@ -372,9 +372,11 @@ check_toml "$NKU_DIR/menu_style.toml"  "menu_style.toml"  "colors"        ""
 check_toml "$NKU_DIR/video.toml"   "video.toml"       "video"         "win_w"
 
 # renderer.toml
-check_toml "$NKU_DIR/renderer.toml" "renderer.toml"   "renderer"      "resources_dir"
-check_toml "$NKU_DIR/renderer.toml" "  → [slot.digit_left]"  "slot.digit_left"  "x"
+check_toml "$NKU_DIR/renderer.toml" "renderer.toml"            "renderer"         "resources_dir"
+check_toml "$NKU_DIR/renderer.toml" "  → [slot.digit_left]"    "slot.digit_left"  "x"
+check_toml "$NKU_DIR/renderer.toml" "  → [slot.notification]"  "slot.notification" "y"
 
+check_toml "$NKU_DIR/media_ingest.toml" "media_ingest.toml" "paths" "mount_point"
 echo ""
 
 # ─── 8. Filesystem ───────────────────────────────────────────────────────────
@@ -423,6 +425,26 @@ if [ -f "/data/videos/output.mp4" ]; then
 else
     fail "MISSING: /data/videos/output.mp4"
 fi
+
+# ─── 9. Notifications ────────────────────────────────────────────────────────
+
+echo "── Notifications (SPRITE_NOTIFICATION, z=5) ────────────"
+
+NOTIF_DIR="$RESOURCES_DIR/notifications"
+
+if [[ ! -d "$NOTIF_DIR" ]]; then
+    fail "NOTIFICATIONS DIR MISSING: $NOTIF_DIR"
+else
+    check_png "$NOTIF_DIR/notif_found.png"      "notifications/notif_found.png"
+    check_png "$NOTIF_DIR/notif_processing.png" "notifications/notif_processing.png"
+    check_png "$NOTIF_DIR/notif_success.png"    "notifications/notif_success.png"
+    check_png "$NOTIF_DIR/notif_no_video.png"   "notifications/notif_no_video.png"
+    check_png "$NOTIF_DIR/notif_eject.png"      "notifications/notif_eject.png"
+    check_png "$NOTIF_DIR/notif_error.png"      "notifications/notif_error.png"
+    check_png "$NOTIF_DIR/notif_no_mcu.png"     "notifications/notif_no_mcu.png"
+    check_png "$NOTIF_DIR/notif_mcu_ok.png"     "notifications/notif_mcu_ok.png"
+fi
+echo ""
 
 # ─── Итог ────────────────────────────────────────────────────────────────────
 

@@ -200,10 +200,12 @@ setup-gdbserver:
 enable-services:
     #!/usr/bin/env bash
     set -euo pipefail
-    ssh "{{ _pi }}" "sudo systemctl enable \
+    ssh "{{_pi}}" "sudo systemctl enable \
+        indicator.target \
         indicator.service \
         indicator-setup.service \
-        indicator-firstboot.service"
+        indicator-firstboot.service \
+        media-ingest.service"
     echo "  ✅  Services enabled"
 
 # =============================================================================
@@ -226,10 +228,12 @@ deploy-systemd:
                    fi && \
                    \
                    sudo systemctl enable i2s-silence.service \
-                       indicator.service \
-                       indicator-setup.service \
-                       indicator-firstboot.service \
-                       2>/dev/null || true"
+                        indicator.target \
+                        indicator.service \
+                        indicator-setup.service \
+                        indicator-firstboot.service \
+                        media-ingest.service \
+                        2>/dev/null || true"
     echo "  ✅  systemd units deployed and enabled"
     echo "  ℹ️   Перезапустить keepalive: just pi::restart-audio"
     echo "  ℹ️   Перезапустить всё:       just pi::restart"
@@ -419,11 +423,11 @@ deploy-debug:
 # ГРУППА: control — управление сервисами на Pi
 # =============================================================================
 
-[doc('Перезапустить сервис indicator')]
+[doc('Перезапустить сервисы indicator & media ingest')]
 [group('control')]
 restart:
-    ssh "{{ _pi }}" "sudo systemctl restart indicator.service"
-    @echo "  ✅  indicator restarted"
+    ssh "{{_pi}}" "sudo systemctl restart indicator.service media-ingest.service"
+    @echo "  ✅  indicator + media-ingest restarted"
 
 [doc('Перезапустить только I2S keepalive (без остановки indicator)')]
 [group('control')]
@@ -441,17 +445,17 @@ restart-audio:
 status:
     ssh "{{ _pi }}" "systemctl status indicator.service media-ingest.service --no-pager"
 
-[doc('Запустить сервис indicator')]
+[doc('Запустить сервисы indicator & media ingest')]
 [group('control')]
 start:
-    ssh "{{ _pi }}" "sudo systemctl start indicator.service"
-    @echo "  ✅  indicator.service started"
+    ssh "{{_pi}}" "sudo systemctl start indicator.service media-ingest.service"
+    @echo "  ✅  indicator + media-ingest started"
 
-[doc('Остановить сервис indicator')]
+[doc('Остановить сервисы indicator & media ingest')]
 [group('control')]
 stop:
-    ssh "{{ _pi }}" "sudo systemctl stop indicator.service"
-    @echo "  ⏹️   indicator.service stopped"
+    ssh "{{_pi}}" "sudo systemctl stop indicator.service media-ingest.service"
+    @echo "  ⏹️   indicator + media-ingest stopped"
 
 # =============================================================================
 # ГРУППА: logs — просмотр логов
@@ -467,10 +471,10 @@ logs:
 logs-ingest:
     ssh "{{ _pi }}" "journalctl -u media-ingest -f --no-pager"
 
-[doc('Показать последние N строк из обоих сервисов (default 50)')]
+[doc('Показать последние N строк из обоих сервисов: just pi::logs-tail 30')]
 [group('logs')]
 logs-tail n="50":
-    ssh "{{ _pi }}" "journalctl -u indicator -u media-ingest -n {{ n }} --no-pager"
+    ssh "{{_pi}}" "journalctl -u indicator -u media-ingest -n {{n}} --no-pager"
 
 # =============================================================================
 # ГРУППА: diag — диагностика UART и железа
@@ -535,6 +539,15 @@ test-smoke:
 [group('util')]
 test-audio:
     ssh "{{ _pi }}" "aplay /usr/share/sounds/alsa/Front_Left.wav"
+
+[doc('Задеплоить и запустить notif_test на Pi')]
+[group('util')]
+test-notif:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "  ▶️   Running notif_test on Pi..."
+    ssh "{{ _pi }}" "{{ PI_DIR }}/tools/notif_test"
+    echo "  ✅  Done"
 
 [doc('Сгенерировать тестовое видео и воспроизвести на Pi')]
 [group('util')]

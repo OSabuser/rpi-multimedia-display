@@ -38,9 +38,9 @@ add_library(dispmanx_renderer STATIC
     layers/loadpng.c
 )
 
-# Публичный include: src/renderer/renderer.h
+# Публичный include: src_indicator/renderer/renderer.h
 target_include_directories(dispmanx_renderer PUBLIC
-    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src_indicator
 )
 
 # Приватные includes: Duncan headers + DispmanX + libpng/zlib из Pi sysroot

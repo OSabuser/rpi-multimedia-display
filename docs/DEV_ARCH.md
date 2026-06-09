@@ -3,6 +3,7 @@
 > Проект: Lift Indicator
 > Устройство: Raspberry Pi Zero W Rev 1.1 (ARM1176JZF-S, ARMv6ZK, Debian Buster)
 > `ssh-add --apple-use-keychain ~/.ssh/id_ed25519` — добавить ключ в агент с сохранением в Keychain
+> `ffmpeg -i input.mp4 -c:v libx264 -profile:v baseline -an output.mp4` - конвертация видео в H.264 MP4 для загрузки на USB-носитель
 
 ---
 
@@ -276,8 +277,9 @@ just pi::status           # статус всех сервисов
 just pi::restart          # перезапустить indicator
 just pi::restart-audio    # перезапустить i2s-silence.service (при зависании dmix)
 just pi::smoke            # smoke test после деплоя
-just pi::check-resources  # валидация 79 ресурсов, конфигов, bind-монтов
+just pi::check-resources  # валидация 144 ресурсов, конфигов, bind-монтов
 just pi::test-audio       # проверить аудио (aplay тестового WAV)
+just pi::test-notif       # тест SPRITE_NOTIFICATION — показать все 8 PNG на живом дисплее
 just pi::test-video       # ffmpeg test.mp4 → Pi → omxplayer
 just pi::dump             # uart_rx_dump (indicator стоп → слушать → поднять)
 just pi::dump-passive     # uart_rx_dump без остановки indicator
@@ -399,6 +401,9 @@ build/pi-debug/              ← debug-бинари (-g3 -O0)
 ├── sounds/
 └── videos/
     └── output.mp4
+
+/run/indicator/
+└── media_status.fifo          ← FIFO IPC indicator ↔ media-ingest (tmpfs, tmpfiles.d)
 ```
 
 ---
@@ -420,3 +425,7 @@ build/pi-debug/              ← debug-бинари (-g3 -O0)
 | Звук пропал, aplay зависает без вывода | dmix IPC deadlock (P-34): aplay убит в момент удержания семафора | `sudo killall -9 aplay && ipcs -m | awk 'NR>3 && $3=="pi"' | xargs -r ipcrm -m && just pi::restart-audio` |
 | `i2s-silence.service` падает с кодом 1 при старте | I2S карта ещё не инициализирована (P-37) | Убедиться что в service есть `ExecStartPre` ожидающий card 0; `just pi::setup-pi` устанавливает правильный unit |
 | Щелчки при каждом звуке | Нет I2S keepalive | `just pi::restart-audio` — проверить что `i2s-silence.service` active |
+| `found 2 MP4 file(s)` при одном файле | macOS AppleDouble `._video.mp4` на флешке | Исправлено в Фазе 7: фильтр `p_name[0]=='.'`; для старых устройств: `dot_clean /Volumes/<флешка>` на macOS |
+| `h264_omx` зависает на несколько минут | Конкуренция с omxplayer за VideoCore IV `/dev/vchiq` | Использовать `-c copy` (мгновенно для H.264 MP4) или libx264 (медленно, без конфликтов) |
+| `media-ingest.service: inactive (dead)` | `indicator.target` не включён | `sudo systemctl enable indicator.target && sudo systemctl start indicator.target` |
+| `media_ipc: mkdir '/run/indicator': Permission denied` | Нет `RuntimeDirectory=indicator` в indicator.service | Добавить `RuntimeDirectory=indicator` в `[Service]` секцию |

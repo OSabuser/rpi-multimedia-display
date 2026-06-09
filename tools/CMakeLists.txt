@@ -4,9 +4,14 @@
 
 if(INDICATOR_PLATFORM_DISPMANX)
 
-    add_executable(uart_rx_dump uart_rx_dump.c)
-    target_include_directories(uart_rx_dump PRIVATE ${CMAKE_SOURCE_DIR}/src)
-    target_link_libraries(uart_rx_dump PRIVATE indicator_transport)
-    apply_warnings(uart_rx_dump)
+  add_executable(uart_rx_dump uart_rx_dump.c)
+  target_include_directories(uart_rx_dump PRIVATE ${CMAKE_SOURCE_DIR}/src)
+  target_link_libraries(uart_rx_dump PRIVATE indicator_transport)
+  apply_warnings(uart_rx_dump)
+
+  add_executable(notif_test notif_test.c)
+  target_include_directories(notif_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
+  target_link_libraries(notif_test PRIVATE dispmanx_renderer indicator_domain)
+  apply_warnings(notif_test)
 
 endif()

@@ -27,6 +27,8 @@ typedef struct renderer_config_s
     int arrow_y;
     int weight_x;
     int weight_y;
+    int notif_x; /**< позиция SPRITE_NOTIFICATION по X (px от левого края) */
+    int notif_y; /**< позиция SPRITE_NOTIFICATION по Y (px от верхнего края) */
 } renderer_config_t;
 
 /* ─── Слоты ──────────────────────────────────────────────────────────────── */

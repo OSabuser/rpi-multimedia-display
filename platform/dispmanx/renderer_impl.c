@@ -77,6 +77,8 @@ static int slot_get_x(const renderer_t *r, sprite_slot_t slot)
         return r->cfg.arrow_x;
     case SPRITE_WEIGHT:
         return r->cfg.weight_x;
+    case SPRITE_NOTIFICATION:
+        return r->cfg.notif_x;
     default:
         return 0;
     }
@@ -94,6 +96,8 @@ static int slot_get_y(const renderer_t *r, sprite_slot_t slot)
         return r->cfg.arrow_y;
     case SPRITE_WEIGHT:
         return r->cfg.weight_y;
+    case SPRITE_NOTIFICATION:
+        return r->cfg.notif_y;
     default:
         return 0;
     }

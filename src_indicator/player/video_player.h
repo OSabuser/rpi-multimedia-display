@@ -75,6 +75,21 @@ void video_player_close(video_player_t *p_vp);
 void video_player_check_and_restart(video_player_t *p_vp);
 
 /**
+ * video_player_replace — перезапустить omxplayer для воспроизведения
+ * обновлённого видеофайла.
+ *
+ * Посылает SIGKILL process group omxplayer. pid НЕ сбрасывается:
+ * SIGCHLD → video_player_check_and_restart() сделает waitpid() и
+ * запустит новый omxplayer с тем же путём, который к этому моменту
+ * уже указывает на обновлённый output.mp4.
+ *
+ * Не блокируется. Безопасен при pid <= 0 (no-op).
+ *
+ * @param p_vp  плеер из video_player_open()
+ */
+void video_player_replace(video_player_t *p_vp);
+
+/**
  * video_player_get_pid — вернуть текущий PID omxplayer, или -1 если не запущен.
  */
 int video_player_get_pid(const video_player_t *p_vp);

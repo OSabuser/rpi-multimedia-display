@@ -22,6 +22,7 @@
 #include "domain/floor.h"
 #include "domain/sound_map.h"
 #include "domain/state.h"
+#include "media/media_ipc.h"
 #include "player/video_player.h"
 #include "protocol/parser.h"
 #include "protocol/types.h"
@@ -49,9 +50,10 @@ static const char *const RENDERER_CONFIG_FILENAME = "renderer.toml";
 static const char *const UART_CONFIG_FILENAME     = "pi_scheme.toml";
 static const char *const SOUNDS_DIR               = "/data/sounds";
 static const char *const VIDEO_PATH               = "/data/videos/output.mp4";
-
+#define NOTIF_DIR "/data/resources/notifications"
 static const int WATCHDOG_INTERVAL_S = 30;
 
+static const unsigned int NOTIF_MCU_OK_HIDE_S = 4U;
 /* ─── Индексы pollfd ─────────────────────────────────────────────────────── */
 
 typedef enum fd_index_e
@@ -59,8 +61,9 @@ typedef enum fd_index_e
     FD_UART  = 0,
     FD_SIG   = 1,
     FD_TIMER = 2,
-    /* FD_FIFO = 3  — Фаза 7 */
-    FD_COUNT = 3,
+    FD_FIFO  = 3, /* FIFO от media-ingest → media_ipc_open()   */
+    FD_NOTIF = 4, /* one-shot timerfd для автоскрытия уведомления */
+    FD_COUNT = 5,
 } fd_index_t;
 
 typedef enum setup_status_e
@@ -83,6 +86,8 @@ typedef struct app_s
     video_player_t *video;
     renderer_t *renderer;
     audio_player_t *audio;
+    int fifo_fd;  /**< fd FIFO от media-ingest; -1 если не открыт  */
+    int notif_fd; /**< timerfd автоскрытия уведомления; -1 если нет */
 } app_t;
 
 /* ─── Статистика ─────────────────────────────────────────────────────────── */
@@ -345,6 +350,97 @@ static setup_status_t read_setup_status(const char *p_path)
     return SETUP_STATUS_UNKNOWN;
 }
 
+/* ─── Notification timer helpers ─────────────────────────────────────────── */
+
+/**
+ * notif_arm — взвести одноразовый timerfd для автоскрытия уведомления.
+ *
+ * @param notif_fd  fd из timerfd_create(); отрицательный — no-op
+ * @param delay_sec задержка в секундах до срабатывания
+ */
+static void notif_arm(int notif_fd, unsigned int delay_sec)
+{
+    if (notif_fd < 0)
+    {
+        return;
+    }
+    const struct itimerspec ts = {
+        .it_interval = { .tv_sec = 0, .tv_nsec = 0 },
+        .it_value    = { .tv_sec = (time_t) delay_sec, .tv_nsec = 0 },
+    };
+    if (timerfd_settime(notif_fd, 0, &ts, NULL) < 0)
+    {
+        syslog(LOG_WARNING, "notif_arm: timerfd_settime: %s", strerror(errno));
+    }
+}
+
+/**
+ * notif_disarm — отменить таймер автоскрытия (it_value = 0).
+ *
+ * @param notif_fd  fd из timerfd_create(); отрицательный — no-op
+ */
+static void notif_disarm(int notif_fd)
+{
+    if (notif_fd < 0)
+    {
+        return;
+    }
+    const struct itimerspec ts = {
+        .it_interval = { .tv_sec = 0, .tv_nsec = 0 },
+        .it_value    = { .tv_sec = 0, .tv_nsec = 0 },
+    };
+    if (timerfd_settime(notif_fd, 0, &ts, NULL) < 0)
+    {
+        syslog(LOG_WARNING, "notif_disarm: timerfd_settime: %s", strerror(errno));
+    }
+}
+
+/* ─── Media status handler ───────────────────────────────────────────────── */
+
+/**
+ * on_media_status — прочитать статус из FIFO и обновить SPRITE_NOTIFICATION.
+ *
+ * MEDIA_CLEAR  → скрыть уведомление, отменить таймер.
+ * MEDIA_DONE   → дополнительно вызвать video_player_replace().
+ * Остальные    → показать соответствующий PNG.
+ */
+static void on_media_status(app_t *p_app)
+{
+    static const char *const NOTIF_PATHS[MEDIA_STATUS_MAX] = {
+        [MEDIA_FOUND]      = NOTIF_DIR "/notif_found.png",
+        [MEDIA_PROCESSING] = NOTIF_DIR "/notif_processing.png",
+        [MEDIA_DONE]       = NOTIF_DIR "/notif_success.png",
+        [MEDIA_NO_VIDEO]   = NOTIF_DIR "/notif_no_video.png",
+        [MEDIA_EJECT]      = NOTIF_DIR "/notif_eject.png",
+        [MEDIA_ERROR]      = NOTIF_DIR "/notif_error.png",
+        /* [MEDIA_CLEAR] (6) → NULL — handled below */
+    };
+
+    media_status_t status;
+    if (media_ipc_read(p_app->fifo_fd, &status) < 0)
+    {
+        return;
+    }
+
+    syslog(LOG_INFO, "media: status=%d", (int) status);
+
+    if (status == MEDIA_CLEAR)
+    {
+        renderer_hide(p_app->renderer, SPRITE_NOTIFICATION);
+        notif_disarm(p_app->notif_fd);
+        return;
+    }
+
+    if (status == MEDIA_DONE)
+    {
+        video_player_replace(p_app->video);
+    }
+
+    if (NOTIF_PATHS[(unsigned int) status] != NULL)
+    {
+        renderer_show_png(p_app->renderer, SPRITE_NOTIFICATION, NOTIF_PATHS[(unsigned int) status]);
+    }
+}
 /**
  * Вызывается при первом валидном фрейме любого opcode.
  * Скрывает уведомление об отсутствии связи с MCU.
@@ -359,7 +455,8 @@ static void maybe_clear_mcu_notification(app_t *p_app)
 
     p_app->setup_status = SETUP_STATUS_OK;
     syslog(LOG_NOTICE, "setup: MCU communication established — clearing notification");
-    /* Фаза 7: renderer_hide(p_app->renderer, SPRITE_NOTIFICATION); */
+    renderer_show_png(p_app->renderer, SPRITE_NOTIFICATION, NOTIF_DIR "/notif_mcu_ok.png");
+    notif_arm(p_app->notif_fd, NOTIF_MCU_OK_HIDE_S);
 }
 /* ─── UART коллбэк ───────────────────────────────────────────────────────── */
 
@@ -638,10 +735,11 @@ int main(int argc, char *p_argv[])
     {
         syslog(LOG_INFO,
                "renderer config: resources=%s digit_l=(%d,%d) digit_r=(%d,%d) "
-               "arrow=(%d,%d) weight=(%d,%d)",
+               "arrow=(%d,%d) weight=(%d,%d) notif=(%d,%d)",
                app.cfg.rdr.resources_dir, app.cfg.rdr.digit_left_x, app.cfg.rdr.digit_left_y,
                app.cfg.rdr.digit_right_x, app.cfg.rdr.digit_right_y, app.cfg.rdr.arrow_x,
-               app.cfg.rdr.arrow_y, app.cfg.rdr.weight_x, app.cfg.rdr.weight_y);
+               app.cfg.rdr.arrow_y, app.cfg.rdr.weight_x, app.cfg.rdr.weight_y, app.cfg.rdr.notif_x,
+               app.cfg.rdr.notif_y);
     }
 
     /* ── pi_scheme.toml (UART port + baudrate) ───────────────────────────── */
@@ -673,6 +771,24 @@ int main(int argc, char *p_argv[])
     {
         (void) close(sig_fd);
         goto fail_early;
+    }
+
+    /* ── FIFO (media-ingest → indicator IPC) ────────────────────────────── */
+
+    app.fifo_fd = media_ipc_open();
+    if (app.fifo_fd < 0)
+    {
+        /* Не фатально: media-ingest может стартовать позже */
+        syslog(LOG_WARNING, "media_ipc_open failed — media status updates disabled");
+    }
+
+    /* ── Notification auto-hide timer ───────────────────────────────────── */
+
+    app.notif_fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
+    if (app.notif_fd < 0)
+    {
+        /* Не фатально: MCU-уведомление не будет автоскрываться */
+        syslog(LOG_WARNING, "notif timerfd_create: %s — auto-hide disabled", strerror(errno));
     }
 
     /* ── Video player ────────────────────────────────────────────────────── */
@@ -731,13 +847,11 @@ int main(int argc, char *p_argv[])
         break;
     case SETUP_STATUS_PUSH_FAILED:
         syslog(LOG_WARNING, "setup: push_failed — MCU не получил команду стриминга");
-        /* Фаза 7: renderer_show_png(app.renderer, SPRITE_NOTIFICATION,
-         *         "/data/resources/notifications/no_mcu.png"); */
+        renderer_show_png(app.renderer, SPRITE_NOTIFICATION, NOTIF_DIR "/notif_no_mcu.png");
         break;
     case SETUP_STATUS_PULL_FAILED:
         syslog(LOG_WARNING, "setup: pull_failed — не удалось прочитать параметры MCU");
-        /* Фаза 7: renderer_show_png(app.renderer, SPRITE_NOTIFICATION,
-         *         "/data/resources/notifications/no_mcu.png"); */
+        renderer_show_png(app.renderer, SPRITE_NOTIFICATION, NOTIF_DIR "/notif_no_mcu.png");
         break;
     case SETUP_STATUS_PENDING:
         syslog(LOG_WARNING, "setup: pending — setup ещё не завершился");
@@ -783,6 +897,10 @@ int main(int argc, char *p_argv[])
     fds[FD_SIG].events   = POLLIN;
     fds[FD_TIMER].fd     = timer_fd;
     fds[FD_TIMER].events = POLLIN;
+    fds[FD_FIFO].fd      = app.fifo_fd; /* -1 → poll игнорирует запись */
+    fds[FD_FIFO].events  = POLLIN;
+    fds[FD_NOTIF].fd     = app.notif_fd; /* -1 → poll игнорирует запись */
+    fds[FD_NOTIF].events = POLLIN;
 
     syslog(LOG_NOTICE, "event loop started, omxplayer_pid=%d", video_player_get_pid(app.video));
 
@@ -793,7 +911,9 @@ int main(int argc, char *p_argv[])
         if (ret < 0)
         {
             if (errno == EINTR)
+            {
                 continue;
+            }
             syslog(LOG_ERR, "poll: %s", strerror(errno));
             break;
         }
@@ -804,20 +924,38 @@ int main(int argc, char *p_argv[])
                 syslog(LOG_ERR, "uart_process_rx: %s", strerror(errno));
         }
         if ((fds[FD_UART].revents & (POLLERR | POLLHUP)) != 0)
+        {
             syslog(LOG_ERR, "uart: device error revents=0x%x", (unsigned) fds[FD_UART].revents);
+        }
 
         if ((fds[FD_SIG].revents & POLLIN) != 0)
         {
             struct signalfd_siginfo si;
             if (read(sig_fd, &si, sizeof(si)) == (ssize_t) sizeof(si))
+            {
                 running = !handle_signal(&si, &app);
+            }
         }
 
-        if ((fds[FD_TIMER].revents & POLLIN) != 0)
+        if ((fds[FD_FIFO].revents & POLLIN) != 0)
+        {
+            on_media_status(&app);
+        }
+        if ((fds[FD_FIFO].revents & POLLHUP) != 0)
+        {
+            /* media-ingest закрыл все write-fd (остановился / упал).
+                * Переоткрыть FIFO: следующий write-fd откроется без блокировки. */
+            media_ipc_close(app.fifo_fd);
+            app.fifo_fd     = media_ipc_open();
+            fds[FD_FIFO].fd = app.fifo_fd;
+        }
+
+        if ((fds[FD_NOTIF].revents & POLLIN) != 0)
         {
             uint64_t exp = 0U;
-            if (read(timer_fd, &exp, sizeof(exp)) == (ssize_t) sizeof(exp))
-                on_watchdog_tick(&app);
+            (void) read(app.notif_fd, &exp, sizeof(exp)); /* drain */
+            renderer_hide(app.renderer, SPRITE_NOTIFICATION);
+            syslog(LOG_DEBUG, "notif: auto-hide timer fired");
         }
 
         /* FD_FIFO (Фаза 7) */
@@ -832,6 +970,8 @@ int main(int argc, char *p_argv[])
     renderer_destroy(app.renderer);
     video_player_close(app.video);
     audio_player_close(app.audio);
+    media_ipc_close(app.fifo_fd);
+    (void) close(app.notif_fd);
     (void) close(timer_fd);
     (void) close(sig_fd);
 

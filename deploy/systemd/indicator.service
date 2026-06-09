@@ -7,6 +7,7 @@ Wants=sound.target indicator-setup.service i2s-silence.service
 Type=simple
 User=pi
 WorkingDirectory=/home/pi/indicator
+RuntimeDirectory=indicator
 
 ExecStart=/home/pi/indicator/indicator \
     --config=/data/pi_nku_configs/nku_scheme.toml

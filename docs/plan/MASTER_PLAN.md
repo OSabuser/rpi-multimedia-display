@@ -1,7 +1,7 @@
 # Lift Indicator — Мастер-план
 
-> **Статус:** Фазы 0–5, Phase Deploy и Phase Deploy Addendum — ЗАКРЫТЫ.
-> Фаза 6 (Deploy v2: overlayroot, build\_image, factory-test) — В РАБОТЕ.
+> **Статус:** Фазы 0–7, Phase Deploy и Phase Deploy Addendum — ЗАКРЫТЫ.
+> Фаза 6 (Deploy v2: overlayroot, build_image, factory-test) — В РАБОТЕ.
 > **Стек:** C11 · DispmanX · omxplayer · ALSA · systemd · CMake · Docker · just
 > **Компилятор:** `zig cc` (`arm-zig-cc` wrapper) — ARMv6, arm1176jzf\_s, hard-float
 > **Устройство:** Raspberry Pi Zero W Rev 1.1 · ARM1176JZF-S · ARMv6ZK · Debian Buster
@@ -24,6 +24,12 @@
 | Аудио из кода | `posix_spawn("aplay")` в отдельном pthread | Нет shell overhead; latency ~30 ms вместо ~150 ms с `system()` |
 | Аудио очередь | Приоритетная, глубина 3 | CRITICAL > FLOOR > MOVEMENT > MUSIC |
 | notify | **Упраздняется** — SPRITE\_NOTIFICATION — слот в renderer | Нет spawn/pkill; нет отдельного `notify` процесса |
+| USB Media Ingest | **Отдельный демон** `media_ingest` (не в indicator) | Изоляция; независимый lifecycle; CAP_SYS_ADMIN только для media_ingest |
+| IPC indicator↔ingest | **Именованный FIFO** `/run/indicator/media_status.fifo`, uint8_t | Простейший надёжный IPC; нет shared memory; POLLHUP → reopen |
+| ffmpeg обработка | **`-c copy`** (потоковое копирование, без перекодировки) | h264_omx конфликтует с omxplayer за VideoCore IV GPU (P-33); `-c copy` мгновенный для H.264 MP4 |
+| SPRITE_NOTIFICATION позиция | Y=874, PNG 600×150 px, настраивается в `renderer.toml` | Нижняя полоса не перекрывает цифры этажа (y=675) и стрелку (y=745) |
+| Скрытые файлы macOS | Фильтр `p_name[0] == '.'` в `ffmpeg_runner.c` | macOS создаёт `._video.mp4` AppleDouble — без фильтра считаются как MP4 (P-32) |
+| indicator.target | Включён в `enable-services` и `deploy-systemd` | media-ingest.service WantedBy=indicator.target; без enable сервис не стартовал (P-34) |
 | Рендеринг цифр | **PNG сейчас**, font-renderer — Фаза 8 (low priority) | Все PNG одного размера → `changeSourceImageLayer` без мигания |
 | BACK.png | RGBA PNG поверх видео, путь в конфиге | Статична сейчас, легко сменить в будущем |
 | Конфиг | **TOML** (`nku_scheme.toml`, `pi_scheme.toml`, `video.toml`, `renderer.toml`) | `pizero.ini` — legacy, не используется |
@@ -48,7 +54,7 @@
 
 ### 2.1 Граф systemd
 
-```
+```bash
 multi-user.target
 ├── indicator-firstboot.service   [ConditionPathExists=!/data/first_boot_done]
 │     first_boot.sh: уникальный hostname + SSH keys + machine-id
@@ -71,13 +77,17 @@ multi-user.target
       ├── [pthread]    audio player (posix_spawn aplay, amixer)
       └── [child]      omxplayer  (posix_spawn, POSIX_SPAWN_SETPGROUP, SIGCHLD watchdog)
 
-media-ingest.service              [Restart=on-failure, RestartSec=5]  ← Фаза 7
-      inotify /dev → mount → ffmpeg → FIFO → indicator
+media-ingest.service              [Restart=on-failure, RestartSec=10, After=indicator.service]
+      inotify /dev → sdXN insert
+      → mount(2) /mnt/usb  [CAP_SYS_ADMIN, vfat/exfat/ext4]
+      → ffmpeg -c copy → rename /data/videos/output.mp4
+      → status_pipe_write() → /run/indicator/media_status.fifo
+      ← indicator on_media_status() → SPRITE_NOTIFICATION + video_player_replace()
 ```
 
 ### 2.2 Z-порядок DispmanX (финальный, Phase 4)
 
-```
+```bash
 Z = 1   omxplayer           видео (--layer 1)
 Z = 2   SPRITE_BACKGROUND   BACK.png, 600×1024, полупрозрачный RGBA
 Z = 3   SPRITE_MODE         mode-иконка, 600×1024 (или скрыт при MODE_NORMAL)
@@ -85,7 +95,7 @@ Z = 4   SPRITE_WEIGHT       load_N.png, 237×59
 Z = 4   SPRITE_DIGIT_LEFT   chars/N.png, 202×346   ← fast_update
 Z = 4   SPRITE_DIGIT_RIGHT  chars/N.png, 202×346   ← fast_update
 Z = 4   SPRITE_ARROW        arrows/up|down.png, 188×209
-Z = 5   SPRITE_NOTIFICATION (Фаза 7 — не реализован)
+Z = 5   SPRITE_NOTIFICATION  600×150 px, y=874, 8 PNG в /data/resources/notifications/
 ```
 
 **fast\_update:** DIGIT\_LEFT, DIGIT\_RIGHT используют `changeSourceImageLayer` (без мигания).
@@ -103,9 +113,13 @@ poll()
   │                  │                                       → audio_player_cancel_music()
   │                  └   opcode=0xC0: LOG_DEBUG (служебный, игнорируется)
   │
-  ├── fifo_fd     → media_status_t от media-ingest  ← Фаза 7
-  │                  → renderer_show_png(SPRITE_NOTIFICATION, ...)
-  │                  → video_player_replace() при MEDIA_STATUS_DONE
+  ├── fifo_fd     → media_status_t от media-ingest
+  │                  → on_media_status(): NOTIF_PATHS[status] → renderer_show_png(SPRITE_NOTIFICATION)
+  │                  → video_player_replace() при MEDIA_DONE
+  │                  POLLHUP → media_ipc_close() + media_ipc_open() (reopen при restart ingest)
+  │
+  ├── notif_fd    → one-shot timerfd, 4 с
+  │                  → renderer_hide(SPRITE_NOTIFICATION)  [автоскрытие notif_mcu_ok]
   │
   ├── signalfd    → SIGTERM/SIGINT → shutdown
   │               → SIGCHLD → video_player_check_and_restart()
@@ -658,6 +672,7 @@ P-26: каскадные рестарты при `pkill -f omxplayer.bin` — о
 **Итог:** все 6 слотов (BACKGROUND, MODE, WEIGHT, DIGIT\_LEFT, DIGIT\_RIGHT, ARROW) отображаются корректно поверх видео; latency UART → экран 88–158 мс; 14/14 тестов.
 
 **Ключевые решения:**
+
 - fast\_update для DIGIT\_LEFT/RIGHT: `changeSourceImageLayer` без пересоздания
 - `renderer_keepalive()` — пустой DispmanX update каждые 30 с (watchdog tick)
 - `renderer_config_load()` — позиции слотов и resources\_dir из renderer.toml
@@ -683,6 +698,7 @@ P-29: ARROW slow path (destroy+recreate при каждом появлении) 
 **Итог:** аудиоподсистема реализована, протестирована на HIL-стенде (24 ч), работает в продакшн-конфигурации. Latency UART → начало звука < 100 мс.
 
 **Реализовано (код):**
+
 - `audio_player_t` — pthread + mutex + condvar
 - Приоритетная очередь depth=3: CRITICAL(0) > FLOOR(1) > MOVEMENT(2) > MUSIC(3)
 - effective\_prio = min(current, min\_queue) — корректное вытеснение без потери DING (P-32)
@@ -694,6 +710,7 @@ P-29: ARROW slow path (destroy+recreate при каждом появлении) 
 - `needs_music=0` если нештатный режим — up.wav играет, музыка не запускается
 
 **Реализовано (инфраструктура):**
+
 - `/etc/asound.conf` — стек `plug → softvol 'PCM' → dmixer → speakerbonnet hw:0` (S32\_LE/48kHz)
 - `deploy/systemd/i2s-silence.service` — I2S keepalive через dmix напрямую; `ExecStartPre` ждёт card 0 до 15 с; `StartLimitBurst=20`
 - `indicator.service` обновлён: `After=i2s-silence.service`, `Wants=i2s-silence.service`
@@ -1036,5 +1053,7 @@ default = "0%"
 | В-06 | g\_single.wav, g\_double.wav, g\_triple.wav — убрать из прямого деплоя? | ⏳ ОТКРЫТ: g\_triple используется как fallback для >49 и UNKNOWN | очистка |
 | В-07 | ARROW\_BOTH (=3) — специальная обработка? | ✅ ЗАКРЫТ: скрывать стрелку (как ARROW\_NONE) | renderer |
 | В-08 | P-24 dbus-daemon timeout — omxplayer --no-dbus? | ⏳ ОТКРЫТ: исследовать в Deploy v2 | Deploy v2 |
-| В-09 | Когда нужен indicator.target (multi-service группа)? | ⏳ ОТКРЫТ: нужен после реализации Фазы 7 (media-ingest) | Фаза 7 |
+| В-09 | Когда нужен indicator.target (multi-service группа)? | ✅ ЗАКРЫТ: включён в Фазе 7; media-ingest WantedBy=indicator.target | Фаза 7 |
 | В-10 | TODO в dump: читать port/baud из pi\_scheme.toml динамически | ⏳ ОТКРЫТ: dump сейчас хардкодит /dev/ttyAMA0 115200 | pi.just |
+| В-11 | h264_omx + omxplayer GPU conflict — независимый encode без конкуренции? | ⏳ ОТКРЫТ: future investigation | future |
+| В-12 | Флешка вставленная до старта демона не обрабатывается (inotify limitation) | ⏳ ОТКРЫТ: known limitation, low priority | future |

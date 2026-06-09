@@ -31,9 +31,11 @@ RUN set -eux; \
         *) echo "Unsupported arch: $ARCH" && exit 1 ;; \
     esac; \
     mkdir -p /opt/zig && \
-    curl -fsSL \
+    curl -fsSL --retry 5 --retry-delay 3 \
         "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-${ZIG_ARCH}-${ZIG_VERSION}.tar.xz" \
-    | tar -xJ -C /opt/zig --strip-components=1
+        -o /tmp/zig.tar.xz && \
+    tar -xJ -C /opt/zig --strip-components=1 -f /tmp/zig.tar.xz && \
+    rm /tmp/zig.tar.xz
 
 # ─── Stage 2: dev ────────────────────────────────────────────────────────────
 
@@ -61,6 +63,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # LLVM 17 инструменты
     clang-17 \
     clangd-17 \
+    imagemagick \
     libclang-rt-17-dev \
     clang-format-17 \
     clang-tidy-17 \

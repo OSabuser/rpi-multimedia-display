@@ -30,7 +30,7 @@ journalctl -u indicator -f | grep -E "renderer:|frame #|dispatch"
 
 | # | Проверка | Команда | Ожидание | ✅/❌ |
 |---|---|---|---|---|
-| П-1 | Ресурсы на Pi | `just pi::check-resources` | `Result: ✅ ALL RESOURCES OK`, `Checked: ≥124 files`, 0 ошибок | ☐ |
+| П-1 | Ресурсы на Pi | `just pi::check-resources` | `Result: ✅ ALL RESOURCES OK`, `Checked: ≥144 files`, 0 ошибок | ☐ |
 | П-2 | Демон запущен | `just pi::status` | `indicator.service: active (running)` | ☐ |
 | П-3 | STM32 стримит | `journalctl -u indicator -n 20` | Строки `frame #N:` появляются | ☐ |
 | П-4 | I2S keepalive | `systemctl status i2s-silence` | `active (running)`, `aplay -D dmixer ...` | ☐ |
@@ -845,7 +845,7 @@ journalctl -u indicator -f | grep -E "renderer:|frame #|dispatch"
 |---|---|
 | **Действие** | `just pi::check-resources` |
 | **Вывод** | `Result: ✅ ALL RESOURCES OK` |
-| | `Checked: ≥124 files` (PNG ресурсы + WAV звуки) |
+| | `Checked: ≥144 files` (PNG ресурсы + WAV звуки) |
 | **Критерий** | 0 ошибок; 0 предупреждений |
 | **Результат** | ☐ Pass  ☐ Fail |
 | **Примечание** | |

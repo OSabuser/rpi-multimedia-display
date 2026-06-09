@@ -75,6 +75,12 @@ pi-dump: _configure-pi
     cmake --build "{{BUILD_DIR}}/pi" --target uart_rx_dump --parallel
     @echo "  ✅  uart_rx_dump ready: {{BUILD_DIR}}/pi/uart_rx_dump"
 
+[doc('Собрать notif_test — тест SPRITE_NOTIFICATION на Pi')]
+[group('pi')]
+pi-notif-test: _configure-pi
+    cmake --build "{{BUILD_DIR}}/pi" --target notif_test --parallel
+    @echo "  ✅  notif_test ready: {{BUILD_DIR}}/pi/notif_test"
+
 [doc('Кросс-компиляция для Pi с debug-символами')]
 [group('pi')]
 pi-debug:
@@ -144,3 +150,9 @@ format:
 clean:
     rm -rf "{{BUILD_DIR}}"
     @echo "  ✅  build/ removed"
+
+[doc('Сгенерировать PNG-уведомления для SPRITE_NOTIFICATION (требует imagemagick)')]
+[group('utils')]
+gen-notif-pngs:
+    bash scripts/gen_notifications.sh deploy/resources/notifications/
+    @echo "  ℹ️   Закоммить: git add deploy/resources/notifications/ && git commit -m 'chore: add notification PNGs'"
