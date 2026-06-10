@@ -57,7 +57,7 @@
 ```bash
 multi-user.target
 ├── indicator-firstboot.service   [ConditionPathExists=!/data/first_boot_done]
-│     first_boot.sh: уникальный hostname + SSH keys + machine-id
+│     first_boot.sh: hostname + SSH keys + machine-id + WiFi seed из /boot/ → /data/ + raspi-config enable_overlayfs + reboot
 │           ↓ Before
 ├── indicator-setup.service       [oneshot, RemainAfterExit=yes, TTYPath=/dev/tty1]
 │     run_setup.sh:
@@ -781,7 +781,7 @@ P-31: однострочные TOML-массивы `[...]` ломали парс
 
 ---
 
-### Фаза 6 — Deploy v2 🔄 В РАБОТЕ
+### Фаза 6 — Deploy v2 ✅ ЗАКРЫТА
 
 **Цель:** надёжность производственного устройства, read-only rootfs, воспроизводимый образ.
 

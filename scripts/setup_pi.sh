@@ -309,6 +309,10 @@ echo "  6. just pi::check-resources    — финальная проверка"
 echo ""
 
 # FIXME: непонятки с cmdline, маскированием getty@tty1
+# overlayfs через raspi-config (встроен в Raspbian Buster, не требует отдельного пакета)
+# Убедиться что ВЫКЛЮЧЕН — first_boot.sh включит при первом старте
+# raspi-config nonint disable_overlayfs 2>/dev/null || true
+# ok "overlayfs disabled (first_boot.sh will enable on first boot)"
 # TODO: установка подключения к WLAN, включение SSH в raspi-config
 # TODO: user в dialout, display, tty!
 # TODO: локаль ru_UTF8, console-setup: 

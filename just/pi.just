@@ -218,7 +218,7 @@ deploy-systemd:
     #!/usr/bin/env bash
     set -euo pipefail
     echo "  📤  Deploying systemd units to {{ _pi }}..."
-    rsync -avz --progress deploy/systemd/ "{{ _pi }}:/tmp/indicator-systemd/"
+    rsync -avz --progress --exclude='.DS_Store' deploy/systemd/ "{{ _pi }}:/tmp/indicator-systemd/"
     ssh "{{ _pi }}" "sudo cp /tmp/indicator-systemd/* /etc/systemd/system/ && \
                    sudo systemctl daemon-reload && \
                    \
@@ -638,3 +638,71 @@ gdbserver-stop:
 [group('diag')]
 debug-output:
     ssh "{{ _pi }}" "tail -f /tmp/gdbserver.log"
+
+
+# =============================================================================
+# ГРУППА: update — обновление production устройства (overlayfs активен)
+# =============================================================================
+# Workflow:
+#   just pi::update-start     ← отключить overlayfs, перезагрузить
+#   just pi::deploy           ← обычный деплой пока rootfs writable
+#   just pi::restart          ← перезапустить сервисы, проверить
+#   just pi::update-finish    ← включить overlayfs, перезагрузить
+# =============================================================================
+
+[doc('Шаг 1/2: отключить overlayfs и перезагрузить (rootfs станет writable)')]
+[group('update')]
+update-start:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo ""
+    if ! ssh "{{ _pi }}" "grep -qs ' / overlay ' /proc/mounts"; then
+        echo "  ⚠️  overlayfs уже выключен на {{ PI_HOST }}"
+        echo "  ℹ️  Можно сразу: just pi::deploy && just pi::restart && just pi::update-finish"
+        exit 0
+    fi
+    echo "  🔓  Disabling overlayfs on {{ PI_HOST }}..."
+    ssh "{{ _pi }}" "sudo raspi-config nonint disable_overlayfs"
+    echo "  🔄  Rebooting..."
+    ssh "{{ _pi }}" "sudo reboot" || true
+    echo ""
+    echo "  ⏳  Жди ~30 секунд, затем:"
+    echo "  ➜   just pi::deploy"
+    echo "  ➜   just pi::restart"
+    echo "  ➜   just pi::update-finish"
+    echo ""
+
+[doc('Шаг 2/2: включить overlayfs и перезагрузить (rootfs станет read-only)')]
+[group('update')]
+update-finish:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo ""
+    if ssh "{{ _pi }}" "grep -qs ' / overlay ' /proc/mounts"; then
+        echo "  ⚠️  overlayfs уже активен на {{ PI_HOST }}"
+        exit 0
+    fi
+    echo "  🔒  Enabling overlayfs on {{ PI_HOST }}..."
+    ssh "{{ _pi }}" "sudo raspi-config nonint enable_overlayfs"
+    echo "  🔄  Rebooting..."
+    ssh "{{ _pi }}" "sudo reboot" || true
+    echo ""
+    echo "  ⏳  Жди ~30 секунд, затем проверь:"
+    echo "  ➜   ssh pi@{{ PI_HOST }} 'grep overlay /proc/mounts'"
+    echo ""
+
+[doc('Перезагрузить Pi')]
+[group('update')]
+reboot:
+    ssh "{{ _pi }}" "sudo reboot" || true
+    @echo "  🔄  Pi rebooting..."
+
+[doc('Проверить статус overlayfs на Pi')]
+[group('update')]
+overlay-status:
+    #!/usr/bin/env bash
+    if ssh "{{ _pi }}" "grep -qs ' / overlay ' /proc/mounts"; then
+        echo "  🔒  overlayfs: ВКЛЮЧЁН (rootfs protected)"
+    else
+        echo "  🔓  overlayfs: ВЫКЛЮЧЕН (rootfs writable)"
+    fi

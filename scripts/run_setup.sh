@@ -30,6 +30,22 @@ if [ -f "$IND/splash/splash.jpg" ] && command -v fbi &>/dev/null; then
     wait "$FBI_PID" 2>/dev/null || true
 fi
 
+# ── 0.5. Статус устройства (до pull/push) ────────────────────────────────────
+CURRENT_HOSTNAME=$(hostname)
+if grep -qs ' / overlay ' /proc/mounts; then
+    OVERLAY_STATUS="ВКЛЮЧЁН"
+else
+    OVERLAY_STATUS="ВЫКЛЮЧЕН"
+fi
+log "hostname: $CURRENT_HOSTNAME | overlayfs: $OVERLAY_STATUS"
+chvt 1
+printf '\033[2J\033[H' > /dev/tty1
+echo "" > /dev/tty1
+printf "  Hostname    : %s\n" "$CURRENT_HOSTNAME" > /dev/tty1
+printf "  overlayfs   : %s\n" "$OVERLAY_STATUS" > /dev/tty1
+echo "" > /dev/tty1
+sleep 3
+
 log "MCU sync started (pull → menu → push)"
 # ── 1. Pull ───────────────────────────────────────────────────────────────────
 log "Step 1/3: pulling parameters from MCU..."
@@ -60,4 +76,5 @@ fi
 
 echo "ok" > "$STATUS_FILE"
 log "MCU sync complete"
+
 exit 0

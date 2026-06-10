@@ -33,6 +33,27 @@ systemd-machine-id-setup
     ln -sf /etc/machine-id /var/lib/dbus/machine-id
 log "machine-id regenerated"
 
-# ── 4. Флаг — больше не запускаться ──────────────────────────────────────────
+# ── 4. Включить overlayfs (rootfs станет read-only после перезагрузки) ────────
+raspi-config nonint enable_overlayfs
+log "overlayfs: enabled via raspi-config"
+
+# ── 5. Флаг — больше не запускаться ──────────────────────────────────────────
 touch /data/first_boot_done
-log "First-boot provisioning complete: $HOSTNAME"
+
+# ── 6. Сводка ─────────────────────────────────────────────────────────────────
+echo ""
+echo "======================================================="
+echo "  INDICATOR — первый старт завершён"
+echo "======================================================="
+printf "  Hostname    : %s\n" "$HOSTNAME"
+echo "  SSH keys    : пересозданы"
+echo "  machine-id  : пересоздан"
+echo "  overlayfs   : ВКЛЮЧЁН (активируется после перезагрузки)"
+echo ""
+echo "  Перезагрузка через 5 секунд..."
+echo "======================================================="
+echo ""
+
+log "First-boot provisioning complete: $HOSTNAME — rebooting to activate overlayfs"
+sleep 5
+systemctl reboot

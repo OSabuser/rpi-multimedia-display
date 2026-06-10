@@ -286,6 +286,10 @@ just pi::dump-passive     # uart_rx_dump без остановки indicator
 just pi::top              # CPU/RAM
 just pi::df               # место на SD-карте
 just pi::backup-image /dev/diskN  # создать .img.gz
+just pi::update-start      # overlayfs выключить + reboot (начало обновления)
+just pi::update-finish     # overlayfs включить + reboot (конец обновления)
+just pi::overlay-status    # показать статус overlayfs
+just pi::reboot            # перезагрузить Pi
 ```
 
 ---
@@ -324,6 +328,19 @@ just pi::smoke         # финальная проверка
 
 # 7. При разработке (итерация):
 just ship              # build::pi → deploy → check-resources → restart
+
+# 8. Прошивка нового устройства:
+
+#    - balenaEtcher → indicator-base-YYYYMMDD.img.gz → карта
+#    - Положить wpa_supplicant.conf в /boot/ (FAT32, с macOS)
+#    - Вставить карту, включить Pi → 2 авто-ребута → готово
+
+# 9. Обновление ПО на production:
+
+just pi::update-start   # overlayfs OFF + reboot
+just pi::deploy         # rsync
+just pi::restart
+just pi::update-finish  # overlayfs ON + reboot
 ```
 
 ---
@@ -393,14 +410,15 @@ build/pi-debug/              ← debug-бинари (-g3 -O0)
     ├── uart_rx_dump
     └── MUp-rpi0
 
-/data/                     ← writable data (сейчас директория; Deploy v2 → ext4 раздел)
+/data/                     ← p3 ext4 раздел (LABEL=data), writable, persistent при overlayfs
 ├── first_boot_done        ← флаг первого старта
 ├── setup_status           ← ok | pull_failed | push_failed | pending
 ├── pi_nku_configs/
 ├── resources/
 ├── sounds/
-└── videos/
-    └── output.mp4
+├── videos/
+│   └── output.mp4
+└── wpa_supplicant.conf    ← WiFi credentials (bind-mount → /etc/wpa_supplicant/wpa_supplicant.conf)
 
 /run/indicator/
 └── media_status.fifo          ← FIFO IPC indicator ↔ media-ingest (tmpfs, tmpfiles.d)
@@ -429,3 +447,7 @@ build/pi-debug/              ← debug-бинари (-g3 -O0)
 | `h264_omx` зависает на несколько минут | Конкуренция с omxplayer за VideoCore IV `/dev/vchiq` | Использовать `-c copy` (мгновенно для H.264 MP4) или libx264 (медленно, без конфликтов) |
 | `media-ingest.service: inactive (dead)` | `indicator.target` не включён | `sudo systemctl enable indicator.target && sudo systemctl start indicator.target` |
 | `media_ipc: mkdir '/run/indicator': Permission denied` | Нет `RuntimeDirectory=indicator` в indicator.service | Добавить `RuntimeDirectory=indicator` в `[Service]` секцию |
+| WiFi не поднимается после первого старта | Race condition dhcpcd/wpa_supplicant при overlayfs (P-38) | `sudo systemctl enable wpa_supplicant.service` |
+| Запись в rootfs теряется после ребута | overlayfs активен — записи идут в tmpfs | Использовать `just pi::update-start` → deploy → `just pi::update-finish` |
+| Нельзя записать в `/lower` | raspi-config overlayfs не экспортирует `/lower` в user-space (P-39) | 2-reboot update cycle (см. выше) |
+| WiFi credentials сброшены после ребута | Конфиг на rootfs, не на `/data/` | Редактировать `/data/wpa_supplicant.conf` напрямую |
