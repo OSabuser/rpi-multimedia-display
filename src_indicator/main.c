@@ -684,8 +684,14 @@ static uart_t *open_uart(app_t *p_app, const uart_config_t *p_uart_cfg)
 
 int main(int argc, char *p_argv[])
 {
+    if (argc > 1 && strcmp(p_argv[1], "--version") == 0)
+    {
+        (void) printf("v" INDICATOR_VERSION " (" INDICATOR_GIT_SHA ")\n");
+        return 0;
+    }
     openlog("indicator", LOG_PID | LOG_CONS, LOG_DAEMON);
-    syslog(LOG_NOTICE, "indicator starting (phase-deploy)");
+    syslog(LOG_NOTICE, "indicator v" INDICATOR_VERSION " (" INDICATOR_GIT_SHA ") starting");
+    ;
 
     const char *p_config_path = parse_config_path(argc, p_argv);
 

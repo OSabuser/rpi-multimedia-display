@@ -32,19 +32,21 @@ fi
 
 # ── 0.5. Статус устройства (до pull/push) ────────────────────────────────────
 CURRENT_HOSTNAME=$(hostname)
+FIRMWARE_VERSION=$("$IND/indicator" --version 2>/dev/null || echo "unknown")
 if grep -qs ' / overlay ' /proc/mounts; then
     OVERLAY_STATUS="ВКЛЮЧЁН"
 else
     OVERLAY_STATUS="ВЫКЛЮЧЕН"
 fi
-log "hostname: $CURRENT_HOSTNAME | overlayfs: $OVERLAY_STATUS"
+log "hostname: $CURRENT_HOSTNAME | firmware: $FIRMWARE_VERSION | overlayfs: $OVERLAY_STATUS"
 chvt 1
 printf '\033[2J\033[H' > /dev/tty1
 echo "" > /dev/tty1
 printf "  Hostname    : %s\n" "$CURRENT_HOSTNAME" > /dev/tty1
+printf "  Firmware    : %s\n" "$FIRMWARE_VERSION" > /dev/tty1
 printf "  overlayfs   : %s\n" "$OVERLAY_STATUS" > /dev/tty1
 echo "" > /dev/tty1
-sleep 3
+sleep 5
 
 log "MCU sync started (pull → menu → push)"
 # ── 1. Pull ───────────────────────────────────────────────────────────────────

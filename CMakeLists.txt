@@ -14,6 +14,22 @@ option(INDICATOR_ENABLE_ASAN        "AddressSanitizer"                       OFF
 option(INDICATOR_ENABLE_UBSAN       "UndefinedBehaviorSanitizer"             OFF)
 option(INDICATOR_WARNINGS_AS_ERRORS "Предупреждения = ошибки"                OFF)
 
+
+# ─── Версия ──────────────────────────────────────────────────────────────────
+
+set(INDICATOR_VERSION "1.0.0")
+
+execute_process(
+    COMMAND git rev-parse --short HEAD
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    OUTPUT_VARIABLE GIT_SHA
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+)
+if(NOT GIT_SHA)
+    set(GIT_SHA "unknown")
+endif()
+
 # ─── Предупреждения компилятора ───────────────────────────────────────────────
 
 include(cmake/Warnings.cmake)
@@ -113,5 +129,12 @@ if(INDICATOR_PLATFORM_DISPMANX)
     )
     apply_warnings(indicator)
 
+    target_compile_definitions(indicator PRIVATE
+        INDICATOR_VERSION="${INDICATOR_VERSION}"
+        INDICATOR_GIT_SHA="${GIT_SHA}"
+    )
+
 
 endif()
+
+

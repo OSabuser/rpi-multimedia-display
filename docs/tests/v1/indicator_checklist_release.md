@@ -1,10 +1,10 @@
-# Lift Indicator — Интеграционные испытания №1
-## Версия документа: 1.0 (Фазы 0–5, без Фазы 6+)
+# Lift Indicator — Финальные испытания перед первым релизом
+## Версия документа: 2.0-RC (Фазы 0–7 + Фаза 6)
 
-**Дата:** _______________
-**Устройство / hostname:** _______________
-**Версия прошивки (git SHA):** _______________
-**Версия конфига MCU:** _______________
+**Дата:** _______________  
+**Устройство / hostname:** _______________  
+**Версия прошивки (git SHA):** _______________  
+**Образ SD-карты:** `indicator-base-___________`  
 **Исполнитель:** _______________
 
 ---
@@ -12,15 +12,24 @@
 ## Команды мониторинга (держать открытыми во время тестов)
 
 ```bash
-# Терминал 1 — общий лог
-journalctl -u indicator -f --no-pager
+# Терминал 1 — основной лог indicator
+just pi::logs
+# или: ssh pi@indicator-XX.local 'journalctl -u indicator -f --no-pager'
 
-# Терминал 2 — только аудио
-journalctl -u indicator -f | grep "audio:"
+# Терминал 2 — лог media-ingest
+just pi::logs-ingest
+# или: ssh pi@indicator-XX.local 'journalctl -u media-ingest -f --no-pager'
 
-# Терминал 3 — только рендерер и фреймы
-journalctl -u indicator -f | grep -E "renderer:|frame #|dispatch"
+# Терминал 3 — renderer + UART-фреймы (из Терминала 1)
+ssh pi@indicator-XX.local 'journalctl -u indicator -f | grep -E "renderer:|frame #|dispatch:|ingest:.*status"'
+
+# Терминал 4 — только аудио (из Терминала 1)
+ssh pi@indicator-XX.local 'journalctl -u indicator -f | grep "audio:"'
 ```
+
+> **Замечание по overlayfs.** Все испытания проводятся при **активном overlayfs**
+> (`П-6 = ✅`). Это производственное состояние. Конфиги хранятся в `/data/pi_nku_configs`
+> (ext4, writable) — переименования и правки в конфигах допустимы.
 
 ---
 
@@ -30,18 +39,21 @@ journalctl -u indicator -f | grep -E "renderer:|frame #|dispatch"
 
 | # | Проверка | Команда | Ожидание | ✅/❌ |
 |---|---|---|---|---|
-| П-1 | Ресурсы на Pi | `just pi::check-resources` | `Result: ✅ ALL RESOURCES OK`, `Checked: ≥144 files`, 0 ошибок | ☐ |
-| П-2 | Демон запущен | `just pi::status` | `indicator.service: active (running)` | ☐ |
-| П-3 | STM32 стримит | `journalctl -u indicator -n 20` | Строки `frame #N:` появляются | ☐ |
-| П-4 | I2S keepalive | `systemctl status i2s-silence` | `active (running)`, `aplay -D dmixer ...` | ☐ |
-| П-5 | Smoke test | `just pi::smoke` | Выход 0 | ☐ |
+| П-1 | Ресурсы на Pi | `just pi::check-resources` | `Result: ✅ ALL RESOURCES OK`, 0 ошибок | ☐ |
+| П-2 | Оба сервиса запущены | `just pi::status` | `indicator.service: active (running)` **и** `media-ingest.service: active (running)` | ☐ |
+| П-3 | STM32 стримит | `just pi::logs-tail 20` | Строки `frame #N:` появляются | ☐ |
+| П-4 | I2S keepalive | `ssh pi@XX 'systemctl status i2s-silence'` | `active (running)` | ☐ |
+| П-5 | Smoke test | `just pi::test-smoke` | Выход 0, все ✅ | ☐ |
+| П-6 | overlayfs ВКЛЮЧЁН | `just pi::overlay-status` | `overlayfs: ВКЛЮЧЁН (rootfs protected)` | ☐ |
+| П-7 | FIFO существует | `ssh pi@XX 'ls -la /run/indicator/media_status.fifo'` | Тип `p` (именованный FIFO) | ☐ |
+| П-8 | /data монтирован (p3) | `ssh pi@XX 'mountpoint /data && df -h /data'` | `is a mountpoint`, ext4, ≥4 GB свободно | ☐ |
 
 ---
 
 ## Секция 1 — Старт и конфигурация
 
-Цель: система корректно стартует, загружает все конфиги в правильном порядке и
-читает setup_status до открытия UART.
+Цель: система корректно стартует, загружает все конфиги в правильном порядке,
+читает `setup_status` до открытия UART, инициализирует FIFO.
 
 ---
 
@@ -49,16 +61,17 @@ journalctl -u indicator -f | grep -E "renderer:|frame #|dispatch"
 
 | Поле | Значение |
 |---|---|
-| **Действие** | `just pi::restart`, затем `journalctl -u indicator -n 30` |
+| **Действие** | `just pi::restart`, затем `just pi::logs-tail 40` |
 | **Лог (порядок обязателен)** | `indicator starting` |
 | | `config: sound=N% music=M% load_idx=K` |
 | | `video config: win=0,0,600x1024` |
 | | `renderer config: resources=…` |
 | | `uart config: port=/dev/ttyAMA0 baud=115200` |
-| | `UART open: /dev/ttyAMA0 @ 115200 baud, 8N1` |
 | | `audio: opened sounds_dir=/data/sounds …` |
+| | `media_ipc: ready fd=N path=/run/indicator/media_status.fifo` |
+| | `UART open: /dev/ttyAMA0 @ 115200 baud, 8N1` |
 | | `event loop started, omxplayer_pid=N` |
-| **Критерий** | Все строки присутствуют в указанном порядке; UART открывается **после** audio |
+| **Критерий** | Все строки присутствуют в указанном порядке; `media_ipc: ready` появляется до `event loop started` |
 | **Результат** | ☐ Pass  ☐ Fail |
 | **Примечание** | |
 
@@ -83,7 +96,7 @@ journalctl -u indicator -f | grep -E "renderer:|frame #|dispatch"
 | **Предусловие** | `cat /data/setup_status` → `ok` |
 | **Действие** | `just pi::restart` |
 | **Лог** | `setup: status=ok` |
-| **Критерий** | Строка `setup: status=ok` присутствует; нет `push_failed`/`pull_failed` |
+| **Критерий** | Строка `setup: status=ok` присутствует; нет `push_failed` / `pull_failed` |
 | **Результат** | ☐ Pass  ☐ Fail |
 | **Примечание** | |
 
@@ -95,7 +108,9 @@ journalctl -u indicator -f | grep -E "renderer:|frame #|dispatch"
 |---|---|
 | **Предусловие** | `echo push_failed > /data/setup_status`, затем рестарт |
 | **Лог** | `setup: push_failed — MCU не получил команду стриминга` |
-| **Критерий** | Предупреждение в логе; индикатор **не падает**; восстановить: `echo ok > /data/setup_status` |
+| **Дисплей** | `notif_no_mcu.png` появляется в нижней полосе экрана |
+| **Критерий** | Предупреждение в логе; индикатор **не падает**; уведомление отображается |
+| **Восстановление** | `echo ok > /data/setup_status`, рестарт |
 | **Результат** | ☐ Pass  ☐ Fail |
 | **Примечание** | |
 
@@ -105,11 +120,11 @@ journalctl -u indicator -f | grep -E "renderer:|frame #|dispatch"
 
 | Поле | Значение |
 |---|---|
-| **Предусловие** | Временно переименовать `nku_scheme.toml`, рестарт |
+| **Предусловие** | Временно переименовать: `mv /data/pi_nku_configs/nku_scheme.toml /data/pi_nku_configs/nku_scheme.toml.bak`, рестарт |
 | **Лог** | `config: '…' not found, using defaults` |
 | | `audio: opened sounds_dir=/data/sounds sound=70% music=50%` (дефолты из `config.h`) |
 | **Критерий** | Система стартует на дефолтах; нет `CRIT` сообщений |
-| **Восстановление** | Вернуть `nku_scheme.toml` на место |
+| **Восстановление** | `mv /data/pi_nku_configs/nku_scheme.toml.bak /data/pi_nku_configs/nku_scheme.toml`, рестарт |
 | **Результат** | ☐ Pass  ☐ Fail |
 | **Примечание** | |
 
@@ -120,9 +135,11 @@ journalctl -u indicator -f | grep -E "renderer:|frame #|dispatch"
 | Поле | Значение |
 |---|---|
 | **Предусловие** | `setup_status` = `push_failed`; STM32 подключён |
-| **Триггер** | Первый валидный фрейм 0xDA или 0xAA от MCU |
+| **Триггер** | Первый валидный фрейм `0xDA` или `0xAA` от MCU |
 | **Лог** | `setup: MCU communication established — clearing notification` |
-| **Критерий** | Строка появляется ровно один раз после первого фрейма; повторно не появляется |
+| **Дисплей** | `notif_mcu_ok.png` появляется → через 4 с скрывается автоматически |
+| **Критерий** | Строка появляется ровно один раз; timerfd авто-скрывает уведомление |
+| **Восстановление** | `echo ok > /data/setup_status` |
 | **Результат** | ☐ Pass  ☐ Fail |
 | **Примечание** | |
 
@@ -155,7 +172,7 @@ journalctl -u indicator -f | grep -E "renderer:|frame #|dispatch"
 |---|---|
 | **Предусловие** | `load_capacity_idx > 0` в `nku_scheme.toml` |
 | **Лог** | `renderer: slot 2 created, z=4, pos=(333,37), size=237x59` |
-| **Визуально** | Иконка грузоподъёмности в верхней части (y=37) |
+| **Визуально** | Иконка грузоподъёмности в верхней части экрана (y=37) |
 | **Критерий** | Появляется до `event loop started` |
 | **Результат** | ☐ Pass  ☐ Fail |
 | **Примечание** | |
@@ -212,8 +229,7 @@ journalctl -u indicator -f | grep -E "renderer:|frame #|dispatch"
 | Поле | Значение |
 |---|---|
 | **Триггер** | Фрейм с однозначным этажом, например 5 |
-| **Лог** | Левый: `chars/16.png` (CHAR_BLANK=16) |
-| | Правый: `chars/5.png` |
+| **Лог** | Левый: `chars/16.png` (CHAR_BLANK=16); правый: `chars/5.png` |
 | **Визуально** | Левая позиция пустая; правая — «5» |
 | **Результат** | ☐ Pass  ☐ Fail |
 | **Примечание** | |
@@ -278,7 +294,6 @@ journalctl -u indicator -f | grep -E "renderer:|frame #|dispatch"
 | Поле | Значение |
 |---|---|
 | **Триггер** | Фрейм с `arrow=2` |
-| **Лог** | `renderer: slot 5 created` |
 | **Визуально** | `arrows/down.png` |
 | **Результат** | ☐ Pass  ☐ Fail |
 | **Примечание** | |
@@ -345,7 +360,7 @@ journalctl -u indicator -f | grep -E "renderer:|frame #|dispatch"
 | Поле | Значение |
 |---|---|
 | **Триггер** | MCU отправляет `mode=255` |
-| **Лог** | `renderer: slot 1 hidden` (или слот не создаётся) |
+| **Лог** | `renderer: slot 1 hidden` |
 | **Критерий** | `mode_to_rel_path(255)` возвращает NULL → `renderer_hide()` |
 | **Результат** | ☐ Pass  ☐ Fail |
 | **Примечание** | |
@@ -376,7 +391,7 @@ journalctl -u indicator -f | grep -E "renderer:|frame #|dispatch"
 
 | Поле | Значение |
 |---|---|
-| **Триггер** | MCU: opcode=0xAA, `DISPATCH_CALL` |
+| **Триггер** | MCU: opcode=0xAA, `DISPATCH CALL` |
 | **Лог** | `dispatch: state=1 (CALL)` |
 | **Визуально** | `modes/calling.png` на весь экран; цифры этажа видны поверх |
 | **Результат** | ☐ Pass  ☐ Fail |
@@ -388,7 +403,7 @@ journalctl -u indicator -f | grep -E "renderer:|frame #|dispatch"
 
 | Поле | Значение |
 |---|---|
-| **Триггер** | MCU: `DISPATCH_ANSWER` |
+| **Триггер** | MCU: `DISPATCH ANSWER` |
 | **Лог** | `dispatch: state=2 (ANSWER)` |
 | **Визуально** | `modes/talking.png` |
 | **Результат** | ☐ Pass  ☐ Fail |
@@ -401,7 +416,7 @@ journalctl -u indicator -f | grep -E "renderer:|frame #|dispatch"
 | Поле | Значение |
 |---|---|
 | **Предусловие** | Активен `MODE_OVERLOAD`, поверх пришёл `DISPATCH_CALL` |
-| **Триггер** | MCU: `DISPATCH_OFF` |
+| **Триггер** | MCU: `DISPATCH OFF` |
 | **Лог** | `dispatch: state=0 (OFF)` → `renderer: slot 1 created` (восстановлен `overload.png`) |
 | **Визуально** | Снова `overload.png`; `calling.png` исчез |
 | **Результат** | ☐ Pass  ☐ Fail |
@@ -415,8 +430,7 @@ journalctl -u indicator -f | grep -E "renderer:|frame #|dispatch"
 |---|---|
 | **Предусловие** | `DISPATCH_CALL` активен, `calling.png` на экране |
 | **Триггер** | MCU: `mode=4 (MODE_OVERLOAD)` через opcode=0xDA |
-| **Лог** | `dispatch_active=1` в строке `frame #N`; `slot 1` не пересоздаётся |
-| **Визуально** | `calling.png` остаётся; `overload.png` не появляется |
+| **Критерий** | `calling.png` остаётся; `overload.png` не появляется |
 | **Результат** | ☐ Pass  ☐ Fail |
 | **Примечание** | |
 
@@ -455,7 +469,7 @@ journalctl -u indicator -f | grep -E "renderer:|frame #|dispatch"
 
 #### 3A-3 — DING → анонс этажа
 
-Проверить три диапазона:
+Проверить диапазоны:
 
 | Этаж | Ожидаемая последовательность файлов | Результат |
 |---|---|---|
@@ -624,7 +638,7 @@ journalctl -u indicator -f | grep -E "renderer:|frame #|dispatch"
 |---|---|
 | **Триггер** | 5+ `SOUND_BUTTON` подряд очень быстро |
 | **Лог** | `audio: queue full, dropping oldest item` |
-| **Критерий** | `systemctl status indicator` → `active (running)` |
+| **Критерий** | `just pi::status` → `active (running)` |
 | **Результат** | ☐ Pass  ☐ Fail |
 | **Примечание** | |
 
@@ -638,7 +652,7 @@ journalctl -u indicator -f | grep -E "renderer:|frame #|dispatch"
 
 | Поле | Значение |
 |---|---|
-| **Триггер** | Во время музыки — MCU отправляет `mode=1–255` |
+| **Триггер** | Во время музыки — MCU отправляет `mode=1–9` |
 | **Лог** | `audio: music cancelled (was playing)` |
 | **Критерий** | Музыка не возобновляется пока режим активен |
 | **Результат** | ☐ Pass  ☐ Fail |
@@ -672,8 +686,7 @@ journalctl -u indicator -f | grep -E "renderer:|frame #|dispatch"
 
 ## Секция 4 — Интеграционные тесты (аудио + дисплей одновременно)
 
-Цель: проверить корректное взаимодействие между подсистемами при одних и тех же событиях.
-Мониторить оба терминала одновременно.
+Цель: корректное взаимодействие подсистем. Мониторить терминалы 3 и 4 одновременно.
 
 ---
 
@@ -681,12 +694,12 @@ journalctl -u indicator -f | grep -E "renderer:|frame #|dispatch"
 
 | Поле | Значение |
 |---|---|
-| **Триггер** | MCU активирует `MODE_FIRE_ALARM=1`, затем кабина начинает движение (UP/DOWN) |
-| **Дисплей** | `renderer: slot 1 created` — `firealarm.png` на экране; цифры этажа меняются поверх |
-| **Аудио (режим)** | `audio: music cancelled` в момент активации режима |
-| **Аудио (движение)** | `audio: playing 'up.wav' prio=2` — up.wav воспроизводится |
+| **Триггер** | MCU активирует `MODE_FIRE_ALARM=1`, затем движение (UP/DOWN) |
+| **Дисплей** | `firealarm.png` на экране; цифры этажа меняются поверх |
+| **Аудио (режим)** | `audio: music cancelled` в момент активации |
+| **Аудио (движение)** | `audio: playing 'up.wav' prio=2` |
 | **Аудио (музыка)** | Строка `audio: music` **отсутствует** после up.wav |
-| **Критерий** | `seq.needs_music` подавлен при активном нештатном режиме; движение озвучивается, музыка не запускается |
+| **Критерий** | `seq.needs_music` подавлен при активном нештатном режиме |
 | **Результат** | ☐ Pass  ☐ Fail |
 | **Примечание** | |
 
@@ -710,10 +723,10 @@ journalctl -u indicator -f | grep -E "renderer:|frame #|dispatch"
 | Поле | Значение |
 |---|---|
 | **Предусловие** | Музыка играет (лифт только что завершил поездку UP) |
-| **Триггер** | MCU отправляет `DISPATCH_CALL` |
+| **Триггер** | MCU отправляет `DISPATCH CALL` |
 | **Дисплей** | `calling.png` появляется немедленно; цифры этажа остаются |
-| **Аудио** | `audio: music cancelled (was playing)` — тишина |
-| **Критерий** | Оба события происходят в одном цикле `poll()`; нет рассинхрона |
+| **Аудио** | `audio: music cancelled (was playing)` |
+| **Критерий** | Оба события происходят в одном цикле `poll()` |
 | **Результат** | ☐ Pass  ☐ Fail |
 | **Примечание** | |
 
@@ -725,8 +738,8 @@ journalctl -u indicator -f | grep -E "renderer:|frame #|dispatch"
 |---|---|
 | **Сценарий** | `MODE_NORMAL` → `MODE_OVERLOAD` → `MODE_NORMAL` |
 | **Дисплей** | Нет иконки → `overload.png` → иконка исчезает |
-| **Аудио** | Музыка может играть → `overload.wav` + музыка отменена → при следующем UP музыка снова запускается |
-| **Критерий** | После возврата в NORMAL музыкальный lifecycle работает нормально (needs_music не сломан) |
+| **Аудио** | При следующем UP после возврата в NORMAL — музыка снова запускается |
+| **Критерий** | `needs_music` lifecycle восстановлен |
 | **Результат** | ☐ Pass  ☐ Fail |
 | **Примечание** | |
 
@@ -736,7 +749,7 @@ journalctl -u indicator -f | grep -E "renderer:|frame #|dispatch"
 
 | Поле | Значение |
 |---|---|
-| **Метод** | `journalctl -o short-monotonic` — смотреть дельту между `frame #N` и `playing '…'` |
+| **Метод** | `journalctl -o short-monotonic` — дельта между `frame #N` и `playing '…'` |
 | **Ожидание** | Δt < 100 мс (типовое); < 300 мс (максимальное) |
 | **Замеренное** | Типовое: ___________ мс / Максимальное: ___________ мс |
 | **Результат** | ☐ Pass  ☐ Fail |
@@ -756,11 +769,177 @@ journalctl -u indicator -f | grep -E "renderer:|frame #|dispatch"
 
 ---
 
-## Секция 5 — Надёжность, watchdog, lifecycle
+## Секция 5 — USB Media Ingest
+
+**Подготовка:** подготовить USB-флешку FAT32. Мониторить терминалы 1 и 2 одновременно.
 
 ---
 
-### 5-1 — Watchdog: периодический лог каждые 30 с
+### 5-1 — Флешка без MP4: NO_VIDEO → EJECT → CLEAR
+
+| Поле | Значение |
+|---|---|
+| **Предусловие** | Флешка FAT32 без MP4-файлов |
+| **Действие** | Вставить флешку в USB-порт Pi |
+| **Лог (media-ingest)** | `ingest: USB insert /dev/sda1` → монтирование → |
+| | `ingest: timer in state=ST_WAIT_PROCESSING` (через 1 с) |
+| **Дисплей** | `notif_no_video.png` появляется в нижней полосе |
+| | Через ~3 с: `notif_eject.png` |
+| | Через ~5 с: уведомление исчезает |
+| **Критерий** | Видео `/data/videos/output.mp4` **не изменилось**; omxplayer не перезапускался |
+| **Результат** | ☐ Pass  ☐ Fail |
+| **Примечание** | |
+
+---
+
+### 5-2 — Флешка с 1 MP4: полный цикл
+
+| Поле | Значение |
+|---|---|
+| **Предусловие** | Флешка с одним файлом `video.mp4` (H.264 MP4, ≥5 с) |
+| **Действие** | Вставить флешку |
+| **Лог (media-ingest)** | `ingest: USB insert` → `ingest: ffmpeg_runner: found 1 MP4` |
+| **Дисплей** | `notif_found.png` (обнаружен) → `notif_processing.png` (идёт обработка) |
+| **Лог (indicator)** | `video_player: replace — killing pgid=N for video reload` → `omxplayer started pid=M` |
+| **Дисплей** | `notif_success.png` → через 3 с `notif_eject.png` → исчезает |
+| **Критерий** | `/data/videos/output.mp4` изменился (новый timestamp); omxplayer воспроизводит новое видео |
+| **Замеренное время** | от вставки до `notif_success`: ___________ с |
+| **Результат** | ☐ Pass  ☐ Fail |
+| **Примечание** | |
+
+---
+
+### 5-3 — Флешка с 3 MP4: сортировка и склейка
+
+| Поле | Значение |
+|---|---|
+| **Предусловие** | Флешка с файлами `a.mp4`, `b.mp4`, `c.mp4` |
+| **Лог (media-ingest)** | `ingest: ffmpeg_runner: found 3 MP4 file(s)` |
+| | Порядок файлов в логе: `a.mp4` → `b.mp4` → `c.mp4` (лексикографический) |
+| **Критерий** | Результирующее видео содержит контент всех трёх; порядок A→B→C |
+| **Результат** | ☐ Pass  ☐ Fail |
+| **Примечание** | |
+
+---
+
+### 5-4 — USB remove во время ffmpeg → kill → старое видео сохраняется
+
+| Поле | Значение |
+|---|---|
+| **Предусловие** | Длинный MP4-файл (>30 с) на флешке; `-c copy` мгновенный, поэтому нужен файл, где ffmpeg займёт несколько секунд — использовать 3+ MP4 |
+| **Действие** | Вставить флешку, дождаться `notif_processing`, извлечь до `notif_success` |
+| **Лог (media-ingest)** | `ingest: USB remove, state=2` → ffmpeg killed |
+| **Дисплей** | Уведомления скрываются; видео не изменилось |
+| **Критерий** | `/data/videos/output.mp4` = оригинальный файл (не повреждённый); omxplayer продолжает работу |
+| **Результат** | ☐ Pass  ☐ Fail |
+| **Примечание** | ⚠️ `-c copy` очень быстрый; тест может быть трудно воспроизвести без специальной подготовки |
+
+---
+
+### 5-5 — USB remove в ST_WAIT_EJECT → немедленный CLEAR
+
+| Поле | Значение |
+|---|---|
+| **Предусловие** | Дождаться `notif_eject.png` (состояние `ST_WAIT_EJECT`) |
+| **Действие** | Извлечь флешку во время отображения `notif_eject.png` |
+| **Лог (media-ingest)** | `ingest: USB remove, state=4` → umount → MEDIA_CLEAR |
+| **Дисплей** | Уведомление исчезает немедленно (без ожидания 5 с) |
+| **Результат** | ☐ Pass  ☐ Fail |
+| **Примечание** | |
+
+---
+
+### 5-6 — Битый MP4 → ERROR → исходное видео не изменилось
+
+| Поле | Значение |
+|---|---|
+| **Предусловие** | Флешка с файлом `bad.mp4` (не валидный H.264 MP4, например текстовый файл с расширением .mp4) |
+| **Действие** | Вставить флешку |
+| **Лог (media-ingest)** | `ingest: ffmpeg_runner: found 1 MP4` → ffmpeg завершается с ошибкой |
+| **Дисплей** | `notif_error.png` → через ~3 с `notif_eject.png` → исчезает |
+| **Критерий** | `/data/videos/output.mp4` = оригинальный файл; `output_tmp.mp4` удалён или не создан |
+| **Результат** | ☐ Pass  ☐ Fail |
+| **Примечание** | |
+
+---
+
+### 5-7 — Повторная замена видео (2 цикла подряд)
+
+| Поле | Значение |
+|---|---|
+| **Действие** | Провести 5-2 дважды подряд с разными видеофайлами |
+| **Критерий** | Второй цикл работает корректно; нет зависания media-ingest; оба раза omxplayer перезапускается |
+| **Лог** | Два `video_player: replace` + два `omxplayer started` |
+| **Результат** | ☐ Pass  ☐ Fail |
+| **Примечание** | |
+
+---
+
+## Секция 6 — Уведомления (SPRITE_NOTIFICATION)
+
+---
+
+### 6-1 — push_failed при старте → `notif_no_mcu.png`
+
+| Поле | Значение |
+|---|---|
+| **Предусловие** | `echo push_failed > /data/setup_status`, рестарт |
+| **Дисплей** | `notif_no_mcu.png` в нижней полосе (y=874, 600×150) поверх всего |
+| **Лог** | `setup: push_failed` |
+| **Критерий** | Уведомление появляется сразу при старте, до первого UART-фрейма |
+| **Восстановление** | `echo ok > /data/setup_status` |
+| **Результат** | ☐ Pass  ☐ Fail |
+| **Примечание** | |
+
+---
+
+### 6-2 — pull_failed при старте → `notif_no_mcu.png`
+
+| Поле | Значение |
+|---|---|
+| **Предусловие** | `echo pull_failed > /data/setup_status`, рестарт |
+| **Дисплей** | `notif_no_mcu.png` отображается |
+| **Критерий** | Аналогично 6-1; оба кода `push_failed` и `pull_failed` приводят к одному уведомлению |
+| **Восстановление** | `echo ok > /data/setup_status` |
+| **Результат** | ☐ Pass  ☐ Fail |
+| **Примечание** | |
+
+---
+
+### 6-3 — Первый UART-фрейм → `notif_mcu_ok.png` → авто-скрытие (4 с)
+
+| Поле | Значение |
+|---|---|
+| **Предусловие** | `push_failed` активен (`notif_no_mcu.png` на экране) |
+| **Триггер** | Первый валидный UART-фрейм от MCU |
+| **Дисплей** | `notif_no_mcu.png` → `notif_mcu_ok.png` → через 4 с уведомление скрыто |
+| **Лог** | `setup: MCU communication established — clearing notification` |
+| | После 4 с: `renderer: slot 6 hidden` (timerfd) |
+| **Критерий** | Авто-скрытие срабатывает ровно через 4 с; повторно не появляется |
+| **Результат** | ☐ Pass  ☐ Fail |
+| **Примечание** | |
+
+---
+
+### 6-4 — test-notif: все 8 PNG проходят визуальный тест
+
+| Поле | Значение |
+|---|---|
+| **Предусловие** | `just pi::stop` (indicator остановлен, DispmanX свободен) |
+| **Действие** | `just pi::test-notif` |
+| **Визуально** | Все 8 PNG появляются поочерёдно в нижней полосе экрана; текст читается; `z=5` поверх видео |
+| **Критерий** | Нет артефактов (пикселизация, обрезка); шрифт корректный |
+| **Восстановление** | `just pi::restart` |
+| **Результат** | ☐ Pass  ☐ Fail |
+| **Примечание** | |
+
+---
+
+## Секция 7 — Надёжность, watchdog, lifecycle
+
+---
+
+### 7-1 — Watchdog: периодический лог каждые 30 с
 
 | Поле | Значение |
 |---|---|
@@ -772,7 +951,9 @@ journalctl -u indicator -f | grep -E "renderer:|frame #|dispatch"
 
 ---
 
-### 5-2 — Keepalive: видео не останавливается при простое
+### 7-2 — Keepalive: видео не останавливается при простое
+
+> ⚠️ Тест длительный (≥2 ч). Рекомендуется запустить на ночь.
 
 | Поле | Значение |
 |---|---|
@@ -781,15 +962,15 @@ journalctl -u indicator -f | grep -E "renderer:|frame #|dispatch"
 | **Визуально** | omxplayer непрерывно воспроизводит видео |
 | **Критерий** | `omxplayer_pid` стабилен в watchdog-строках; нет перезапусков видео |
 | **Результат** | ☐ Pass  ☐ Fail |
-| **Примечание** | |
+| **Примечание** | Начало: ___________ / Конец: ___________ |
 
 ---
 
-### 5-3 — Автовосстановление omxplayer при падении
+### 7-3 — Автовосстановление omxplayer при падении
 
 | Поле | Значение |
 |---|---|
-| **Действие** | `ssh pi@indicator-01.local 'kill -KILL $(pgrep omxplayer.bin)'` |
+| **Действие** | `ssh pi@XX 'kill -KILL $(pgrep omxplayer.bin)'` |
 | **Лог** | `SIGCHLD: child pid=N` → `video_player: omxplayer stopped` → `omxplayer started pid=M` |
 | **Визуально** | Видео возобновляется < 2 с |
 | **Критерий** | Новый PID в логе; перерыв видео < 2 с |
@@ -798,7 +979,7 @@ journalctl -u indicator -f | grep -E "renderer:|frame #|dispatch"
 
 ---
 
-### 5-4 — Корректный shutdown
+### 7-4 — Корректный shutdown
 
 | Поле | Значение |
 |---|---|
@@ -810,11 +991,11 @@ journalctl -u indicator -f | grep -E "renderer:|frame #|dispatch"
 | | `indicator stopped` |
 | **Критерий** | Все строки присутствуют в порядке; shutdown < 3 с |
 | **Результат** | ☐ Pass  ☐ Fail |
-| **Примечание** | |
+| **Примечание** | ⚠️ Cosmetic: dbus-daemon может вызвать timeout ~5 с (P-24, known issue) |
 
 ---
 
-### 5-5 — Рестарт: состояние восстанавливается
+### 7-5 — Рестарт: состояние восстанавливается
 
 | Поле | Значение |
 |---|---|
@@ -827,26 +1008,204 @@ journalctl -u indicator -f | grep -E "renderer:|frame #|dispatch"
 
 ---
 
-### 5-6 — systemd автоперезапуск при краше демона
+### 7-6 — systemd автоперезапуск indicator при краше
 
 | Поле | Значение |
 |---|---|
-| **Действие** | `ssh pi@indicator-01 'kill -KILL $(pgrep indicator)'` |
-| **Лог** | `systemctl status indicator` — `Restart=always`, вскоре `active (running)` |
-| **Критерий** | Демон перезапускается < 5 с (RestartSec=2); нет бесконечного цикла перезапуска |
+| **Действие** | `ssh pi@XX 'kill -KILL $(pgrep -x indicator)'` |
+| **Лог** | `systemctl status indicator` → вскоре `active (running)` |
+| **Критерий** | Демон перезапускается < 5 с (RestartSec=2); нет бесконечного цикла |
 | **Результат** | ☐ Pass  ☐ Fail |
 | **Примечание** | |
 
 ---
 
-### 5-7 — check-resources: нет ошибок
+### 7-7 — Рестарт indicator НЕ убивает media-ingest
+
+| Поле | Значение |
+|---|---|
+| **Действие** | `just pi::restart`; после старта проверить PID media-ingest |
+| **До:** | `ssh pi@XX 'systemctl show media-ingest --property=MainPID'` → PID=A |
+| **После:** | то же → PID=A (не изменился) |
+| **Критерий** | media-ingest PID стабилен при рестарте indicator |
+| **Результат** | ☐ Pass  ☐ Fail |
+| **Примечание** | |
+
+---
+
+### 7-8 — Kill media-ingest → рестарт через 10 с → FIFO переоткрывается
+
+| Поле | Значение |
+|---|---|
+| **Действие** | `ssh pi@XX 'kill -KILL $(pgrep media_ingest)'` |
+| **Лог (media-ingest)** | Через ~10 с: `media_ingest starting` |
+| **Лог (indicator)** | `media_ipc: closed fd=N` (POLLHUP) → `media_ipc: ready fd=M path=…` (reopen) |
+| **Критерий** | indicator переоткрывает FIFO при перезапуске ingest; USB-тест после этого работает штатно |
+| **Результат** | ☐ Pass  ☐ Fail |
+| **Примечание** | |
+
+---
+
+### 7-9 — Флешка вставленная до старта demona не обрабатывается (known limitation)
+
+| Поле | Значение |
+|---|---|
+| **Действие** | Вставить флешку с MP4, затем `just pi::restart` |
+| **Ожидание** | media-ingest **не** обрабатывает флешку (inotify видит только новые события) |
+| **Критерий** | Система стабильна; нет краша; после извлечения и повторной вставки — штатная обработка |
+| **Результат** | ☐ Pass  ☐ Fail |
+| **Примечание** | Задокументированное ограничение (В-12) |
+
+---
+
+### 7-10 — SIGTERM оба сервиса → clean shutdown
+
+| Поле | Значение |
+|---|---|
+| **Действие** | `just pi::stop` (останавливает оба сервиса) |
+| **Лог (indicator)** | `indicator stopped` |
+| **Лог (media-ingest)** | `ingest: SIGTERM — stopping` → `media_ingest stopped` |
+| **Критерий** | Оба сервиса завершились cleanly; нет zombie-процессов |
+| **Восстановление** | `just pi::start` |
+| **Результат** | ☐ Pass  ☐ Fail |
+| **Примечание** | |
+
+---
+
+### 7-11 — check-resources: нет ошибок
 
 | Поле | Значение |
 |---|---|
 | **Действие** | `just pi::check-resources` |
 | **Вывод** | `Result: ✅ ALL RESOURCES OK` |
-| | `Checked: ≥144 files` (PNG ресурсы + WAV звуки) |
+| | `Checked: ≥133 файлов` |
 | **Критерий** | 0 ошибок; 0 предупреждений |
+| **Замеренное** | Checked: ___________ файлов |
+| **Результат** | ☐ Pass  ☐ Fail |
+| **Примечание** | |
+
+---
+
+## Секция 8 — Overlayfs & rootfs-защита
+
+Цель: убедиться что rootfs read-only, `/data` writable и persistent, WiFi работает после ребутов.
+
+---
+
+### 8-1 — overlayfs ВКЛЮЧЁН: rootfs read-only
+
+| Поле | Значение | 
+|---|---|
+| **Предусловие** | П-6 = ✅ |
+| **Действие** | `ssh pi@XX 'sudo touch /usr/test_write 2>&1'` |
+| **Ожидание** | команда завершается без ошибки (запись уходит в tmpfs overlay) |
+| **Действие 2** | `just pi::reboot` → проверить что файл исчез |
+| **Ожидание 2** | `/usr/test_write` — **отсутствует** |
+| **Критерий** | rootfs - нижний (ro) слой, отзеркаленный в tmpfs |
+| **Результат** | ☐ Pass  ☐ Fail |
+| **Примечание** | |
+
+---
+
+### 8-2 — tmpfs overlay: изменения не переживают ребут
+
+| Поле | Значение |
+|---|---|
+| **Действие** | `ssh pi@XX 'sudo touch /tmp/test_overlay_file'` → ребут → проверить |
+| **После ребута** | `/tmp/test_overlay_file` — **отсутствует** |
+| **Критерий** | Запись в overlay (tmpfs) не сохраняется после ребута — rootfs защищён |
+| **Результат** | ☐ Pass  ☐ Fail |
+| **Примечание** | Тест занимает ~30 с (перезагрузка) |
+
+---
+
+### 8-3 — `/data` (p3, ext4): writable и persistent
+
+| Поле | Значение |
+|---|---|
+| **Действие 1** | `ssh pi@XX 'echo test_persistent > /data/test_file'` → ребут |
+| **После ребута** | `ssh pi@XX 'cat /data/test_file'` → `test_persistent` |
+| **Действие 2 (cleanup)** | `ssh pi@XX 'rm /data/test_file'` |
+| **Критерий** | Данные на `/data` переживают ребут с активным overlayfs |
+| **Результат** | ☐ Pass  ☐ Fail |
+| **Примечание** | |
+
+---
+
+### 8-4 — WiFi после ребута (wpa_supplicant из /data)
+
+| Поле | Значение |
+|---|---|
+| **Действие** | `just pi::reboot`; подождать ~30 с |
+| **Проверка** | `just pi::status` (SSH успешно подключился) |
+| | `ssh pi@XX 'ip addr show wlan0 \| grep inet'` → наличие IP-адреса |
+| | `ssh pi@XX 'cat /data/wpa_supplicant.conf \| grep ssid'` → корректный SSID |
+| **Критерий** | WiFi поднимается автоматически; bind-mount `/data/wpa_supplicant.conf → /etc/wpa_supplicant/wpa_supplicant.conf` активен |
+| **Результат** | ☐ Pass  ☐ Fail |
+| **Примечание** | ⚠️ Тест неприменим при Ethernet-подключении |
+
+---
+
+## Секция 9 — Производственный update-цикл
+
+Цель: проверить полный workflow обновления ПО при активном overlayfs.
+
+> ⚠️ **Внимание.** Этот цикл включает два ребута (~30 с каждый). Сервисы будут
+> недоступны на время. Проводить при наличии физического доступа к устройству
+> или стабильного сетевого соединения.
+
+---
+
+### 9-1 — update-start: overlayfs OFF, rootfs writable
+
+| Поле | Значение |
+|---|---|
+| **Предусловие** | П-6 = ✅ (overlayfs ВКЛЮЧЁН) |
+| **Действие** | `just pi::update-start` |
+| **Вывод** | `Disabling overlayfs` → `Rebooting` |
+| **После ребута** | `just pi::overlay-status` → `overlayfs: ВЫКЛЮЧЕН (rootfs writable)` |
+| **Критерий** | rootfs writable; ребут занял < 45 с |
+| **Результат** | ☐ Pass  ☐ Fail |
+| **Примечание** | |
+
+---
+
+### 9-2 — deploy после update-start
+
+| Поле | Значение |
+|---|---|
+| **Предусловие** | 9-1 = ✅; overlayfs ВЫКЛЮЧЕН |
+| **Действие** | `just pi::deploy && just pi::restart` |
+| **Критерий** | Деплой успешен (rsync завершился без ошибок); `just pi::status` → оба сервиса `active` |
+| | `just pi::test-smoke` → выход 0 |
+| **Результат** | ☐ Pass  ☐ Fail |
+| **Примечание** | |
+
+---
+
+### 9-3 — update-finish: overlayfs ON, rootfs protected
+
+| Поле | Значение |
+|---|---|
+| **Предусловие** | 9-2 = ✅ |
+| **Действие** | `just pi::update-finish` |
+| **Вывод** | `Enabling overlayfs` → `Rebooting` |
+| **После ребута** | `just pi::overlay-status` → `overlayfs: ВКЛЮЧЁН (rootfs protected)` |
+| **Критерий** | rootfs снова read-only |
+| **Результат** | ☐ Pass  ☐ Fail |
+| **Примечание** | |
+
+---
+
+### 9-4 — Верификация после цикла обновления
+
+| Поле | Значение |
+|---|---|
+| **Предусловие** | 9-3 = ✅; overlayfs ВКЛЮЧЁН |
+| **Действие** | Повторить предусловия П-1..П-8 |
+| **Критерий** | Все предусловия ✅; система работает в штатном режиме |
+| | `just pi::test-smoke` → выход 0 |
+| | Провести любые 3 теста из Секций 1–4 для верификации |
 | **Результат** | ☐ Pass  ☐ Fail |
 | **Примечание** | |
 
@@ -854,25 +1213,32 @@ journalctl -u indicator -f | grep -E "renderer:|frame #|dispatch"
 
 ## Итоговая сводка
 
-| Секция | Тестов | Pass | Fail | Примечание |
-|---|---|---|---|---|
-| 1 — Старт и конфигурация | 6 | | | |
-| 2A — Статические слои | 3 | | | |
-| 2B — Цифры этажа | 6 | | | |
-| 2C — Стрелка | 4 | | | |
-| 2D — Режимы | 12 | | | |
-| 2E — Диспетчер | 4 | | | |
-| 3A — Базовые звуки | 7 (+9 в 3A-3) | | | |
-| 3B — Музыкальный lifecycle | 5 | | | |
-| 3C — Вытеснение | 4 | | | |
-| 3D — Отмена музыки | 3 | | | |
-| 4 — Интеграция | 6 | | | |
-| 5 — Надёжность | 7 | | | |
-| **Итого** | **~76** | | | |
+| Секция | Тестов | Pass | Fail | Критические? | Примечание |
+|---|---|---|---|---|---|
+| Предусловия | 8 | | | ДА — блокируют всё | |
+| 1 — Старт и конфигурация | 6 | | | ДА | |
+| 2A — Статические слои | 3 | | | ДА | |
+| 2B — Цифры этажа | 6 | | | ДА | |
+| 2C — Стрелка | 4 | | | ДА | |
+| 2D — Режимы | 12 | | | ДА | |
+| 2E — Диспетчер | 4 | | | ДА | |
+| 3A — Базовые звуки | 7 (+9 в 3A-3) | | | ДА | |
+| 3B — Музыкальный lifecycle | 5 | | | ДА | |
+| 3C — Вытеснение | 4 | | | ДА | |
+| 3D — Отмена музыки | 3 | | | ДА | |
+| 4 — Интеграция | 6 | | | ДА | |
+| 5 — USB Media Ingest | 7 | | | ДА | Нужна флешка |
+| 6 — Уведомления | 4 | | | ДА | |
+| 7 — Надёжность | 11 | | | 7-2 опционален (2ч) | |
+| 8 — Overlayfs | 4 | | | ДА | +ребуты |
+| 9 — Update-цикл | 4 | | | ДА | +2 ребута |
+| **Итого** | **~107** | | | | |
+
+---
 
 **Общий результат:** ☐ PASS  ☐ FAIL (есть блокирующие дефекты)
 
-**Блокирующие дефекты:**
+**Блокирующие дефекты (новые, не P-24 / P-29):**
 
 1. ___________________________________________________________________________
 
@@ -880,7 +1246,13 @@ journalctl -u indicator -f | grep -E "renderer:|frame #|dispatch"
 
 3. ___________________________________________________________________________
 
-**Некритичные замечания:**
+**Известные неустранённые проблемы (не блокируют релиз):**
+
+- P-24: `dbus-daemon` cosmetic timeout (~5 с) при `stop indicator` — не влияет на работу
+- P-29: ARROW slow path (destroy+recreate) при каждом появлении — визуально приемлемо
+- В-12: Флешка, вставленная до старта media-ingest, не обрабатывается (inotify limitation)
+
+**Некритичные замечания (пронумеровать):**
 
 _______________________________________________________________________________
 
@@ -888,7 +1260,7 @@ _______________________________________________________________________________
 
 ## Справка: таблицы маппинга
 
-### Z-порядок слоёв
+### Z-порядок DispmanX-слоёв (финальный)
 
 | Слот | Z | Файл | Размер |
 |---|---|---|---|
@@ -896,10 +1268,10 @@ _______________________________________________________________________________
 | BACKGROUND (0) | 2 | `BACK.png` | 600×1024 |
 | MODE (1) | 3 | `modes/*.png` | 600×1024 |
 | WEIGHT (2) | 4 | `weights/load_N.png` | 237×59 |
-| DIGIT_LEFT (3) | 4 | `chars/N.png` | 202×346 |
-| DIGIT_RIGHT (4) | 4 | `chars/N.png` | 202×346 |
+| DIGIT_LEFT (3) | 4 | `chars/N.png` (fast_update) | 202×346 |
+| DIGIT_RIGHT (4) | 4 | `chars/N.png` (fast_update) | 202×346 |
 | ARROW (5) | 4 | `arrows/up\|down.png` | 188×209 |
-| NOTIFICATION (6) | 5 | *(Фаза 7)* | — |
+| NOTIFICATION (6) | 5 | `notifications/notif_*.png` | 600×150, y=874 |
 
 ### Приоритеты аудио
 
@@ -928,6 +1300,20 @@ _______________________________________________________________________________
 | `DISPATCH_CALL` (via 0xAA) | — | `modes/calling.png` |
 | `DISPATCH_ANSWER` (via 0xAA) | — | `modes/talking.png` |
 
+### media_status_t → уведомление
+
+| Код | Константа | PNG | Автоскрытие |
+|---|---|---|---|
+| 1 | `MEDIA_FOUND` | `notif_found.png` | Нет (меняется на PROCESSING) |
+| 2 | `MEDIA_PROCESSING` | `notif_processing.png` | Нет |
+| 3 | `MEDIA_DONE` | `notif_success.png` | Нет (меняется на EJECT через 3 с) |
+| 4 | `MEDIA_NO_VIDEO` | `notif_no_video.png` | Нет (меняется на EJECT через 3 с) |
+| 5 | `MEDIA_EJECT` | `notif_eject.png` | Нет (скрывается через 5 с) |
+| 6 | `MEDIA_ERROR` | `notif_error.png` | Нет (меняется на EJECT через 3 с) |
+| 0 | `MEDIA_CLEAR` | *(скрыть слот)* | — |
+| — | MCU: `push_failed`/`pull_failed` | `notif_no_mcu.png` | Нет |
+| — | MCU: первый валидный фрейм | `notif_mcu_ok.png` | Да, 4 с (timerfd) |
+
 ### Анонс этажа: диапазоны WAV
 
 | Тип этажа | Диапазон | Последовательность |
@@ -943,3 +1329,17 @@ _______________________________________________________________________________
 | BASEMENT_N | П1–П9 | `{N}.wav` + `podval.wav` + `floor.wav` |
 | NEGATIVE | −1..−9 | `minus.wav` + `{N}.wav` + `floor.wav` |
 | UNKNOWN | — | `g_single.wav` (fallback) |
+
+### Конечный автомат media-ingest
+
+| Состояние | Описание | Переход при USB insert | Переход при таймере | Переход при USB remove |
+|---|---|---|---|---|
+| `ST_IDLE` | Ожидание | → `ST_WAIT_PROCESSING` | — | — |
+| `ST_WAIT_PROCESSING` | Пауза 1 с | — | → `ST_FFMPEG_RUNNING` | → `ST_IDLE` + CLEAR |
+| `ST_FFMPEG_RUNNING` | ffmpeg работает | игнорировать | — | → `ST_IDLE` + kill + CLEAR |
+| `ST_WAIT_EJECT` | Ожидание извлечения 3 с | — | → `ST_WAIT_UMOUNT` | → `ST_IDLE` + umount + CLEAR |
+| `ST_WAIT_UMOUNT` | Ожидание размонтирования 5 с | — | → `ST_IDLE` + umount + CLEAR | → `ST_IDLE` + umount + CLEAR |
+
+---
+
+*Документ составлен по итогам Фаз 0–7 + Фаза 6. Предыдущие версии: `indicator_checklist_1.md` (Фазы 0–5), `indicator_checklist_2.md` (Фаза 7).*
