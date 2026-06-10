@@ -1,0 +1,15 @@
+[Unit]
+Description=Lift Indicator — First Boot Provisioning
+# Запускается только если флаг ещё не создан
+ConditionPathExists=!/data/first_boot_done
+After=local-fs.target
+Before=indicator-setup.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# root — нужен для hostnamectl, dpkg-reconfigure, systemd-machine-id-setup
+ExecStart=/home/pi/indicator/scripts/first_boot.sh
+
+[Install]
+WantedBy=multi-user.target

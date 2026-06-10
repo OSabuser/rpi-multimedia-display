@@ -1,0 +1,25 @@
+# ТРЕБОВАНИЕ К ВИДЕОФАЙЛАМ:
+# Формат: H.264 (AVC) в контейнере MP4 (.mp4)
+# Разрешение: любое (omxplayer масштабирует под окно 600x800)
+# Аудио: не используется (indicator управляет аудио через ALSA)
+# При несовместимом формате: ffmpeg вернёт ошибку → экран покажет
+# "Ошибка обработки", исходное видео останется без изменений.
+#
+# Конвертация из любого формата:
+#   ffmpeg -i input.avi -c:v libx264 -profile:v baseline output.mp4
+#
+# Три коротких тестовых ролика разного цвета:
+# ffmpeg -f lavfi -i "color=c=red:size=600x400:duration=3" \
+#    -c:v libx264 -profile:v baseline -an a_clip.mp4
+
+# ffmpeg -f lavfi -i "color=c=green:size=600x400:duration=3" \
+#    -c:v libx264 -profile:v baseline -an b_clip.mp4
+
+# ffmpeg -f lavfi -i "color=c=blue:size=600x400:duration=3" \
+#    -c:v libx264 -profile:v baseline -an c_clip.mp4
+
+[paths]
+mount_point   = /mnt/usb
+video_output  = /data/videos/output.mp4
+tmp_output    = /data/videos/output_tmp.mp4
+status_fifo   = /run/indicator/media_status.fifo

@@ -1,0 +1,7 @@
+[Unit]
+Description=Lift Indicator System
+Wants=indicator.service media-ingest.service
+After=indicator.service media-ingest.service
+
+[Install]
+WantedBy=multi-user.target

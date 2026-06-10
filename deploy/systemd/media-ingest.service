@@ -1,0 +1,19 @@
+[Unit]
+Description=Media Ingest Daemon (USB video replacement)
+After=local-fs.target indicator.service
+ConditionPathExists=/home/pi/indicator/media_ingest
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/indicator
+ExecStart=/home/pi/indicator/media_ingest --config=/data/pi_nku_configs/media_ingest.toml
+Restart=on-failure
+RestartSec=10
+AmbientCapabilities=CAP_SYS_ADMIN
+CapabilityBoundingSet=CAP_SYS_ADMIN
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=indicator.target

@@ -1,0 +1,66 @@
+{
+    "name": "Lift Indicator — Build Environment",
+    "build": {
+        "context": "../build-env",
+        "dockerfile": "../build-env/Dockerfile"
+    },
+    "workspaceMount": "source=${localWorkspaceFolder},target=/project,type=bind",
+    "workspaceFolder": "/project",
+    "mounts": [
+        "source=${localWorkspaceFolder}/build,target=/project/build,type=bind,consistency=delegated",
+        "source=${env:HOME}/.ssh,target=/root/.ssh,type=bind"
+    ],
+    "runArgs": [
+        "--add-host=host.docker.internal:host-gateway"
+    ],
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "llvm-vs-code-extensions.vscode-clangd",
+                "xaver.clang-format",
+                "ms-vscode.cmake-tools",
+                "skellock.just",
+                "nefrob.vscode-just-syntax",
+                "ms-vscode.cpptools",
+                "brobeson.ctest-lab",
+                "usernamehw.errorlens",
+                "gruntfuggly.todo-tree",
+                "wayou.vscode-todo-highlight",
+                "davidanson.vscode-markdownlint",
+                "yzhang.markdown-all-in-one",
+                "bierner.markdown-preview-github-styles",
+                "cheshirekow.cmake-format"
+            ],
+            "settings": {
+                "C_Cpp.intelliSenseEngine": "disabled",
+                "clangd.path": "clangd",
+                "clangd.arguments": [
+                    "--background-index",
+                    "--clang-tidy",
+                    "--header-insertion=never",
+                    "--log=error",
+                    "--query-driver=/usr/local/bin/arm-zig-cc,/usr/bin/clang*,/usr/bin/clang-17"
+                ],
+                "editor.formatOnSave": true,
+                "editor.defaultFormatter": "xaver.clang-format",
+                "[c]": {
+                    "editor.defaultFormatter": "xaver.clang-format",
+                    "editor.formatOnSave": true
+                },
+                "cmake.buildDirectory": "${workspaceFolder}/build/host",
+                "cmake.configureArgs": [
+                    "-DINDICATOR_PLATFORM_DISPMANX=OFF",
+                    "-DINDICATOR_BUILD_TESTS=ON",
+                    "-DINDICATOR_ENABLE_ASAN=ON",
+                    "-DINDICATOR_ENABLE_UBSAN=ON",
+                    "-DCMAKE_BUILD_TYPE=Debug"
+                ],
+                "files.associations": {
+                    "*.h": "c",
+                    "*.c": "c"
+                }
+            }
+        }
+    },
+    "postCreateCommand": "sed -i '/UseKeychain/d; /AddKeysToAgent/d' /root/.ssh/config 2>/dev/null || true && echo '✅ ...'"
+}

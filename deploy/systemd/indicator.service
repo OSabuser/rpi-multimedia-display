@@ -1,0 +1,25 @@
+[Unit]
+Description=Lift Indicator Daemon
+After=sound.target indicator-setup.service i2s-silence.service
+Wants=sound.target indicator-setup.service i2s-silence.service
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/indicator
+RuntimeDirectory=indicator
+
+ExecStart=/home/pi/indicator/indicator \
+    --config=/data/pi_nku_configs/nku_scheme.toml
+
+Restart=always
+RestartSec=2
+TimeoutStopSec=5
+KillMode=control-group
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=indicator
+
+[Install]
+WantedBy=multi-user.target

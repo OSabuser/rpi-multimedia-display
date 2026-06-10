@@ -1,0 +1,2 @@
+console=tty3 root=PARTUUID=f20fbb6b-02 rootfstype=ext4 fsck.repair=yes rootwait consoleblank=0 quiet loglevel=3
+# console=tty3 root=PARTUUID=26a08d2a-02 rootfstype=ext4 fsck.repair=yes rootwait - OK Mode

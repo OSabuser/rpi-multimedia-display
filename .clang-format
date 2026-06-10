@@ -1,0 +1,55 @@
+---
+Language: Cpp
+BasedOnStyle: LLVM
+
+# --- Отступы ---
+IndentWidth: 4           
+TabWidth: 4
+UseTab: Never           
+
+# --- Скобки ---
+BreakBeforeBraces: Allman   
+                            
+                           
+
+# --- Длина строки ---
+ColumnLimit: 100         
+
+# --- Выравнивание ---
+AlignConsecutiveAssignments:
+  Enabled: true          
+  AcrossEmptyLines: false
+  AcrossComments: false
+AlignConsecutiveMacros:
+  Enabled: true          
+  AcrossEmptyLines: false
+  AcrossComments: false
+AlignConsecutiveDeclarations:
+  Enabled: false         
+
+# --- Пробелы ---
+SpaceBeforeParens: ControlStatements   
+SpaceInEmptyParentheses: false
+SpacesInParentheses: false
+SpaceAfterCStyleCast: true             
+
+# --- Указатели ---
+PointerAlignment: Right  
+                         
+
+# --- Переносы ---
+AllowShortFunctionsOnASingleLine: None     
+AllowShortIfStatementsOnASingleLine: Never 
+AllowShortLoopsOnASingleLine: false
+
+# --- Include-сортировка ---
+SortIncludes: CaseSensitive
+IncludeBlocks: Regroup   
+
+# --- Комментарии ---
+ReflowComments: false    
+                         
+
+# --- Прочее ---
+InsertTrailingCommas: None
+Cpp11BracedListStyle: false

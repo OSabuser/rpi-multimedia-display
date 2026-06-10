@@ -1,0 +1,45 @@
+# renderer.toml — конфигурация DispmanX-рендерера
+#
+# Все координаты в пикселях, дисплей 600×1024.
+# Размеры PNG берутся из файла при загрузке — здесь не задаются.
+# Раскладка z-слоёв:
+#   Z=2  BACKGROUND  (BACK.png, полный экран)
+#   Z=3  MODE        (mode-иконка, полный экран, или скрыт)
+#   Z=4  WEIGHT      (load_N.png, 237×59)
+#   Z=4  DIGIT_LEFT  (chars/N.png, 202×346) — fast_update
+#   Z=4  DIGIT_RIGHT (chars/N.png, 202×346) — fast_update
+#   Z=4  ARROW       (arrows/*.png, 188×209) — fast_update
+#   Z=5  NOTIFICATION (Фаза 7)
+# Экран 600×1024:
+#     ┌──────────────┐ y=0
+#     │   WEIGHT     │ y=37   (59px высота)
+#     │              │
+#     │ DIGIT DIGIT  │ y=675  (346px высота)
+#     │   ARROW      │ y=745  (209px высота → до ~954)
+#     │              │
+#     ├──────────────┤ y=874  ← SPRITE_NOTIFICATION начинается здесь
+#     │ NOTIFICATION │        (PNG 600×150px)
+#     └──────────────┘ y=1024
+
+[renderer]
+resources_dir = /data/resources
+
+[slot.digit_left]
+x = 15
+y = 675
+
+[slot.digit_right]
+x = 185
+y = 675
+
+[slot.arrow]
+x = 391
+y = 745
+
+[slot.weight]
+x = 333
+y = 27
+
+[slot.notification]
+x = 0
+y = 874

@@ -1,0 +1,66 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        // =================================================================
+        // gdbserver: start tunnel
+        // Открывает SSH-туннель localhost:3333 → Pi:3333
+        // и запускает gdbserver на Pi с indicator-debug.
+        //
+        // Туннель живёт пока задача активна.
+        // При завершении отладки VSCode завершает задачу → туннель закрыт.
+        // =================================================================
+        {
+            "label": "gdbserver: start tunnel",
+            "type": "shell",
+            "command": "just",
+            "args": ["pi::gdbserver-start"],
+            "isBackground": true,
+            "problemMatcher": {
+                "pattern": {
+                    "regexp": "^(GDBSERVER READY)$",
+                    "message": 1
+                },
+                "background": {
+                    "activeOnStart": true,
+                    "beginsPattern": "^Starting gdbserver",
+                    "endsPattern": "^GDBSERVER READY$"
+                }
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated",
+                "group": "debug"
+            }
+        },
+
+        // =================================================================
+        // Build: pi-debug (кросс-компиляция с -g3 -O0)
+        // =================================================================
+        {
+            "label": "build: pi-debug",
+            "type": "shell",
+            "command": "just",
+            "args": ["build::pi-debug"],
+            "group": "build",
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            }
+        },
+
+        // =================================================================
+        // Deploy debug binary → Pi
+        // =================================================================
+        {
+            "label": "deploy: pi-debug",
+            "type": "shell",
+            "command": "just",
+            "args": ["pi::deploy-debug"],
+            "dependsOn": ["build: pi-debug"],
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            }
+        }
+    ]
+}
