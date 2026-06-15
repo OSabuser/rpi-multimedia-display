@@ -77,8 +77,9 @@ step "Настройка I2S overlay для MAX98357 (googlevoicehat-soundcard)"
 
 BOOT_CONFIG="/boot/config.txt"
 
-if grep -q "^dtoverlay=googlevoicehat-soundcard" "$BOOT_CONFIG"; then
-    warn "dtoverlay=googlevoicehat-soundcard уже есть — пропускаем"
+# Проверить наличие любого I2S audio overlay (googlevoicehat, hifiberry-dac, и др.)
+if grep -qE "^dtoverlay=(googlevoicehat-soundcard|hifiberry-dac|hifiberry-dacplus|hifiberry-digi|i2s-mmap)" "$BOOT_CONFIG"; then
+    warn "I2S overlay уже прописан в $BOOT_CONFIG — пропускаем добавление googlevoicehat-soundcard"
 else
     echo "dtoverlay=googlevoicehat-soundcard" >> "$BOOT_CONFIG"
     ok "dtoverlay=googlevoicehat-soundcard добавлен в $BOOT_CONFIG"
@@ -89,7 +90,7 @@ if grep -q "^dtparam=audio=on" "$BOOT_CONFIG"; then
     sed -i 's|^dtparam=audio=on|#dtparam=audio=on  # disabled by setup_pi.sh (I2S amp)|' "$BOOT_CONFIG"
     ok "dtparam=audio=on отключён"
 else
-    warn "dtparam=audio=on не найден — пропускаем"
+    warn "dtparam=audio=on не найден или уже выключен — пропускаем"
 fi
 
 ok "I2S overlay configured"
@@ -292,9 +293,9 @@ ok "IPC directory configured: /run/indicator/"
 
 # ─── 11. Маскировка getty@tty1 (для TUI при старте) ──────────────────────────
 
-#step "Маскировка getty@tty1"
-#systemctl mask getty@tty1.service
-#ok "getty@tty1 masked"
+step "Маскировка getty@tty1"
+systemctl mask getty@tty1.service
+ok "getty@tty1 masked"
 
 # ─── Итог ─────────────────────────────────────────────────────────────────────
 

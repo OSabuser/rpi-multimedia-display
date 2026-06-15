@@ -127,6 +127,11 @@ RUN ln -s /opt/zig/zig /usr/local/bin/zig
 RUN printf '#!/bin/sh\nexec zig cc -target arm-linux-gnueabihf -mcpu=arm1176jzf_s "$@"\n' \
     > /usr/local/bin/arm-zig-cc && chmod +x /usr/local/bin/arm-zig-cc
 
+# ─── Wrapper: arm-zig-cc-a53 (Pi Zero 2W, Cortex-A53) ───────────────────────
+
+RUN printf '#!/bin/sh\nexec zig cc -target arm-linux-gnueabihf -mcpu=cortex_a53 "$@"\n' \
+    > /usr/local/bin/arm-zig-cc-a53 && chmod +x /usr/local/bin/arm-zig-cc-a53
+
 # ─── Pi sysroot: /opt/vc (DispmanX, bcm_host) ────────────────────────────────
 
 COPY pi-sysroot/opt/vc /opt/vc
@@ -141,6 +146,7 @@ WORKDIR /project
 
 RUN echo "=== zig ===" && zig version && \
     echo "=== arm-zig-cc ===" && arm-zig-cc --version 2>&1 | head -1 && \
+    echo "=== arm-zig-cc-a53 ===" && arm-zig-cc-a53 --version 2>&1 | head -1 && \
     echo "=== clangd ===" && clangd --version && \
     echo "=== clang-format ===" && clang-format --version && \
     echo "=== gdb-multiarch ===" && gdb-multiarch --version | head -1 && \

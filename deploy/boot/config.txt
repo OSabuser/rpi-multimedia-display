@@ -1,45 +1,12 @@
 # Дмитрий Акимов, ООО "МЮ", 2026 г.
 
-# Поддержка кастомного TFT дисплея RGB 10.1
-# 
-# hdmi_timings:
-# Параметр 1:  h_active_pixels    - активные пиксели по горизонтали (ширина разрешения)
-# Параметр 2:  h_sync_polarity     - полярность H-sync (0 = positive, 1 = negative)
-# Параметр 3:  h_front_porch       - горизонтальный front porch (пиксели)
-# Параметр 4:  h_sync_pulse        - длительность H-sync импульса (пиксели)
-# Параметр 5:  h_back_porch        - горизонтальный back porch (пиксели)
-# Параметр 6:  v_active_lines      - активные линии по вертикали (высота разрешения)
-# Параметр 7:  v_sync_polarity     - полярность V-sync (0 = positive, 1 = negative)
-# Параметр 8:  v_front_porch       - вертикальный front porch (линии)
-# Параметр 9:  v_sync_pulse        - длительность V-sync импульса (линии)
-# Параметр 10: v_back_porch        - вертикальный back porch (линии)
-# Параметр 11: v_sync_offset_a     - смещение для чересстрочного поля A (обычно 0)
-# Параметр 12: v_sync_offset_b     - смещение для чересстрочного поля B (обычно 0)
-# Параметр 13: pixel_rep           - повторение пикселей (0 = нет, 1 = каждый × 2, и т.д.)
-# Параметр 14: frame_rate          - частота кадров (Гц)
-# Параметр 15: interlaced          - режим развёртки (0 = progressive, 1 = interlaced)
-# Параметр 16: pixel_freq          - частота пикселей (Гц)
-# Параметр 17: aspect_ratio        - соотношение сторон (1=4:3, 2=14:9, 3=16:9, 4=5:4, 5=16:10, 6=15:9)
-#
-# Правила:
-#
-# h_total = h_active_pixels + h_front_porch + h_sync_pulse + h_back_porch
-# h_blanking = h_front_porch + h_sync_pulse + h_back_porch
-#
-# v_total = v_active_lines + v_front_porch + v_sync_pulse + v_back_porch
-# v_blanking = v_front_porch + v_sync_pulse + v_back_porch
-#
-# pixel_freq = h_total × v_total × frame_rate
-#
-hdmi_timings=1024 0 70 90 75 600 0 1 23 0 0 0 0 60 0 37000000 1 
-hdmi_group=2
-hdmi_mode=87
 hdmi_force_hotplug=1
 hdmi_blanking=0
 config_hdmi_boost=7
 gpu_mem=128
 hdmi_drive=1
 display_hdmi_rotate=3
+disable_overscan=1
 
 [all]
 # GPIO для управления дисплеем
@@ -68,7 +35,3 @@ dtoverlay=i2s-mmap
 
 # Включение аппаратного Watchdog
 dtparam=watchdog=on
-
-# Отключить радужный прямоугольник GPU при загрузке
-disable_splash=1
-
