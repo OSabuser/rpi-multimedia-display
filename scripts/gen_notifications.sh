@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
+
 # scripts/gen_notifications.sh
 #
 # Генерирует PNG-уведомления для SPRITE_NOTIFICATION (DispmanX z=5).
 #
-# Формат: 600×150 px, RGBA, тёмный полупрозрачный фон, белый текст.
-# Размещение на экране 600×1024: y=874 (нижние 150 px).
+# Формат: 1080×270 px, RGBA, тёмный полупрозрачный фон, белый текст.
+# Размещение на экране 1080×1920: y=1638 (нижние 282 px видимой области).
 #
 # Зависимости: imagemagick (convert), шрифт DejaVu-Sans-Bold.
 # Запуск: bash scripts/gen_notifications.sh [OUTDIR]
@@ -14,8 +15,8 @@ set -euo pipefail
 
 OUTDIR="${1:-deploy/resources/notifications}"
 FONT="DejaVu-Sans-Bold"
-SIZE="600x150"
-POINTSIZE=36
+SIZE="1080x270"
+POINTSIZE=64
 BG_COLOR="rgba(0,0,0,0.72)"
 
 GREEN="\033[0;32m"; RED="\033[0;31m"; RESET="\033[0m"
@@ -38,7 +39,7 @@ gen() {
     convert \
         -size "${SIZE}" xc:none \
         -fill "${BG_COLOR}" \
-        -draw 'rectangle 0,0,599,149' \
+        -draw 'rectangle 0,0,1079,269' \
         -font "${FONT}" \
         -pointsize "${POINTSIZE}" \
         -fill white \

@@ -555,12 +555,12 @@ test-video:
     #!/usr/bin/env bash
     set -euo pipefail
     echo "  🎬  Generating test video..."
-    ffmpeg -f lavfi -i testsrc=duration=5:size=600x1024:rate=25 \
+    ffmpeg -f lavfi -i testsrc=duration=5:size=1080x1920:rate=25 \
            -vcodec libx264 -pix_fmt yuv420p /tmp/indicator_test.mp4 -y 2>/dev/null
     echo "  📤  Copying to Pi..."
     scp /tmp/indicator_test.mp4 "{{ PI_USER }}@{{ PI_HOST }}:/tmp/test.mp4"
     echo "  ▶️   Playing on Pi (Ctrl+C to stop)..."
-    ssh "{{ PI_USER }}@{{ PI_HOST }}" "omxplayer --no-osd --win 0,0,600,1024 --layer 1 /tmp/test.mp4"
+    ssh "{{ PI_USER }}@{{ PI_HOST }}" "omxplayer --no-osd --win 0,0,1080,1920 --layer 1 /tmp/test.mp4"
 
 [doc('Показать загрузку CPU/RAM на Pi')]
 [group('util')]

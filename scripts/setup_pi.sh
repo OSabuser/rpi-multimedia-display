@@ -61,7 +61,6 @@ systemctl disable --now triggerhappy.service            2>/dev/null || true
 ok "Unnecessary services disabled"
 
 # ─── 4. I2S overlay (googlevoicehat) ─────────────────────────────────────────
-#
 # MAX98357A подключён через I2S. ALSA-карта появляется только после загрузки
 # dtoverlay=googlevoicehat-soundcard.
 #
@@ -209,7 +208,7 @@ systemctl daemon-reload
 systemctl enable i2s-silence.service
 ok "i2s-silence.service installed and enabled"
 
-
+# ─── 7. /data structure (мутабельные данные устройства) ──────────────────────
 
 step "Добавление pi в группы video и tty (для fbi)"
 usermod -a -G video pi
@@ -221,8 +220,6 @@ step "Настройка sudoers для fbi (boot splash)"
 echo "pi ALL=(root) NOPASSWD: /usr/bin/fbi" > /etc/sudoers.d/indicator-fbi
 chmod 0440 /etc/sudoers.d/indicator-fbi
 ok "sudoers configured for fbi"
-
-# ─── 7. /data structure (мутабельные данные устройства) ──────────────────────
 
 step "Создание /data структуры"
 mkdir -p \
