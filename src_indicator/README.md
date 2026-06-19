@@ -1,199 +1,232 @@
-# Main: event loop, сигналы, watchdog
+# src_indicator — Lift Indicator daemon
 
-## Зачем `#define _GNU_SOURCE`
+Демон индикатора лифта. Получает фреймы от STM32 по UART, обновляет
+DispmanX-рендерер и воспроизводит звук.
 
-В `main.c` используются Linux-специфичные системные вызовы, недоступные
-без `_GNU_SOURCE`:
+Платформа: **Raspberry Pi Zero 2W** · BCM2710A1 · 4× Cortex-A53 · Debian Buster armhf.
 
-| Символ | Заголовок | Почему нужен |
-|---|---|---|
-| `signalfd()`, `SFD_NONBLOCK`, `SFD_CLOEXEC` | `<sys/signalfd.h>` | Linux-specific |
-| `timerfd_create()`, `TFD_NONBLOCK`, `TFD_CLOEXEC` | `<sys/timerfd.h>` | Linux-specific |
-| `CLOCK_MONOTONIC` | `<time.h>` | POSIX, но видим только с _GNU_SOURCE в glibc |
-| `sigemptyset`, `sigprocmask`, `SIG_BLOCK` | `<signal.h>` | POSIX.1-2001, но clangd без _GNU_SOURCE не видит |
+---
 
-`#define _GNU_SOURCE` должен стоять **до любых `#include`** — иначе заголовки
-уже включились без нужных guard-блоков.
+## Структура модуля
 
-При сборке с `cmake -DCMAKE_C_EXTENSIONS=ON` компилятор использует `-std=gnu11`,
-который неявно определяет `_GNU_SOURCE`. Это объясняет почему сборка проходила,
-но clangd (LSP) всё равно подчёркивал символы красным — clangd читает исходный
-файл независимо, без флагов компилятора, если `_GNU_SOURCE` не определён явно.
+```bash
+src_indicator/
+├── main.c           — composition root: инициализация, poll loop, cleanup
+├── app_handlers.c   — обработчики событий: UART, media IPC, watchdog, уведомления
+├── app_render.c     — обновление DispmanX-слотов по событиям лифта и диспетчера
+├── app_private.h    — общие типы app_t / stats_t и forward-объявления для трёх TU
+│
+├── audio/           — ALSA-плеер (aplay, pthread)
+├── config/          — парсер nku_scheme.toml / video.toml / renderer.toml
+├── domain/          — бизнес-логика: parser, floor, state, sound_map
+├── media/           — IPC с media-ingest (FIFO)
+├── player/          — omxplayer wrapper
+├── protocol/        — типы MU-протокола
+├── renderer/        — публичный API DispmanX-рендерера (renderer.h)
+└── transport/       — UART (termios)
+```
+
+### Декомпозиция main.c → три TU
+
+| Файл | Содержимое |
+|---|---|
+| `main.c` | `main()`, setup-функции (`signalfd`, `timerfd`, `open_uart`, `read_setup_status`), poll loop, cleanup |
+| `app_handlers.c` | `on_uart_frame()`, `on_media_status()`, `on_watchdog_tick()`, `maybe_clear_mcu_notification()`, `notif_arm()`, `notif_disarm()` |
+| `app_render.c` | `renderer_apply_elevator()`, `renderer_apply_mode()`, `renderer_apply_dispatch()`, `mode_to_rel_path()` |
+| `app_private.h` | `app_t`, `stats_t`, `setup_status_t`, `fd_index_t`, `extern g_s_stats`, forward-объявления |
 
 ---
 
 ## Архитектура event loop
 
-Весь `main.c` — это один поток, один системный вызов `poll()`, три файловых
-дескриптора.
+Один поток, один `poll()`, пять файловых дескрипторов.
 
-```bash
-                    ┌──────────────────────────────┐
-                    │          poll(fds, 3, -1)     │
-                    │  ждёт события на ЛЮБОМ из fd  │
-                    └──────┬────────────┬─────┬─────┘
-                           │            │     │
-                      POLLIN          POLLIN POLLIN
-                           │            │     │
-                    uart_fd         sig_fd  timer_fd
-                           │            │     │
-              uart_process_rx()   handle_  on_watchdog_
-                           │      signal()   tick()
-                           │
-                    on_uart_frame()
-                           │
-              protocol_parse_payload()
-              floor_decode()
-              state_apply_frame()
-                           │
-              [Фаза 4] renderer_update()
-              [Фаза 5] audio_play()
+```mermaid
+flowchart TD
+    POLL["poll(fds, 5, -1)\nблокирует до любого события"]
+
+    POLL -->|POLLIN| FD_UART["FD_UART\nuart_fd"]
+    POLL -->|POLLIN| FD_SIG["FD_SIG\nsig_fd"]
+    POLL -->|POLLIN| FD_TIMER["FD_TIMER\ntimer_fd"]
+    POLL -->|POLLIN| FD_FIFO["FD_FIFO\nmedia fifo"]
+    POLL -->|POLLIN| FD_NOTIF["FD_NOTIF\nnotif timerfd"]
+
+    FD_UART --> UPR["uart_process_rx()"]
+    UPR --> OUF["on_uart_frame()"]
+    OUF --> PPP["protocol_parse_payload()\nfloor_decode()\nstate_apply_frame()"]
+    PPP --> RAE["renderer_apply_elevator()"]
+    PPP --> AUD["audio_player_play()"]
+
+    FD_SIG --> HS["handle_signal()"]
+    HS -->|SIGTERM/SIGINT| STOP["running = 0"]
+    HS -->|SIGCHLD| VCR["video_player_check_and_restart()"]
+
+    FD_TIMER --> OWT["on_watchdog_tick()\nлог статистики + keepalive"]
+
+    FD_FIFO --> OMS["on_media_status()\nSPRITE_NOTIFICATION"]
+
+    FD_NOTIF --> HIDE["renderer_hide(NOTIFICATION)\nавтоскрытие через N сек"]
 ```
 
-### Почему один поток, а не несколько
+### Почему один поток
 
-- Pi Zero W — одноядерный ARMv6. Контексты потоков дороги.
-- Весь горячий путь (UART → парсер → рендерер → аудио) завершается
-  за единицы миллисекунд. Блокирующих операций нет.
-- Отсутствие shared state между потоками = отсутствие мьютексов
-  в критическом пути = предсказуемая latency.
+Pi Zero 2W имеет 4 ядра, но создавать потоки ради event loop нет смысла:
 
-Исключение: аудиоплеер (Фаза 5) будет в отдельном pthread, потому что
-`waitpid(aplay_pid)` должен ждать завершения аудио, не блокируя loop.
+- Весь горячий путь (UART → парсер → рендерер) завершается за единицы мс. Блокирующих операций нет.
+- Отсутствие shared state = отсутствие мьютексов в критическом пути = предсказуемая latency.
+- Исключение: `audio_player` работает в отдельном pthread, потому что `waitpid(aplay_pid)` должен ждать завершения звука не блокируя loop.
 
 ---
 
-## signalfd: почему так, а не `signal()`/`sigaction()`
+## Порядок инициализации
 
-### Традиционный способ
+```mermaid
+flowchart LR
+    A["1. config_load()\nnku_scheme + video + renderer + uart toml"]
+    B["2. state_init()"]
+    C["3. signalfd\n(до дочерних процессов)"]
+    D["4. timerfd\n(watchdog)"]
+    E["5. media_ipc_open()\nFIFO от media-ingest"]
+    F["6. notif timerfd\n(автоскрытие уведомлений)"]
+    G["7. video_player_open()\nomxplayer subprocess"]
+    H["8. renderer_create()\nDispmanX display"]
+    I["9. audio_player_open()\npthread"]
+    J["10. uart_open()\nпоследним"]
 
-```c
-signal(SIGTERM, my_handler);
-
-void my_handler(int sig) {
-    g_running = 0;   // ← async-signal-safe ли это? только если volatile sig_atomic_t
-}
+    A --> B --> C --> D --> E --> F --> G --> H --> I --> J
 ```
 
-Проблемы:
+UART открывается последним намеренно: `on_uart_frame()` вызывается синхронно
+из `uart_process_rx()` — к этому моменту renderer и audio должны быть готовы,
+иначе NULL-дереференс.
 
-- Обработчик вызывается асинхронно, прерывая любой системный вызов.
-- Из обработчика безопасно вызывать только `async-signal-safe` функции
-  (список короткий — `write()`, `_exit()` и ещё ~30 функций).
-- `syslog()`, `malloc()`, `pthread_mutex_lock()` — **не безопасны** внутри обработчика.
+---
 
-### Способ с signalfd
+## Файловые дескрипторы poll loop
+
+| Индекс | fd | Событие | Обработчик |
+|---|---|---|---|
+| `FD_UART` | `/dev/serial0` | POLLIN | `uart_process_rx()` → `on_uart_frame()` |
+| `FD_SIG` | signalfd | POLLIN | `handle_signal()` |
+| `FD_TIMER` | timerfd 30 с | POLLIN | `on_watchdog_tick()` |
+| `FD_FIFO` | `/run/indicator/media_status.fifo` | POLLIN / POLLHUP | `on_media_status()` / переоткрытие |
+| `FD_NOTIF` | timerfd one-shot | POLLIN | `renderer_hide(SPRITE_NOTIFICATION)` |
+
+`FD_FIFO = -1` и `FD_NOTIF = -1` при ошибке открытия — `poll()` игнорирует
+отрицательные fd, функциональность деградирует без падения.
+
+---
+
+## signalfd: почему не `signal()` / `sigaction()`
+
+Традиционный обработчик вызывается асинхронно и ограничен async-signal-safe
+функциями (`write()`, `_exit()`, ~30 штук). `syslog()`, `malloc()`,
+`pthread_mutex_lock()` — небезопасны внутри обработчика.
+
+С signalfd сигнал — это просто POLLIN на fd:
 
 ```c
-/* 1. Заблокировать сигналы от стандартной доставки */
+/* Заблокировать стандартную доставку */
 sigprocmask(SIG_BLOCK, &mask, NULL);
 
-/* 2. Получить fd, из которого можно читать как из файла */
-sig_fd = signalfd(-1, &mask, SFD_NONBLOCK);
+/* fd, из которого сигнал читается как структура */
+sig_fd = signalfd(-1, &mask, SFD_NONBLOCK | SFD_CLOEXEC);
+
+/* В poll loop — обычный read, никаких ограничений */
+read(sig_fd, &si, sizeof(si));
+syslog(LOG_NOTICE, "signal %u", si.ssi_signo); /* безопасно */
 ```
 
-Теперь сигнал — это просто данные в файловом дескрипторе:
+**SIGCHLD** через signalfd: omxplayer завершается → ядро посылает SIGCHLD →
+POLLIN на `FD_SIG` → `video_player_check_and_restart()` без ограничений.
+
+---
+
+## timerfd: watchdog tick и P-28 митигация
 
 ```c
-if (fds[FD_SIG].revents & POLLIN) {
-    struct signalfd_siginfo si;
-    read(sig_fd, &si, sizeof(si));   /* читаем сигнал как структуру */
-    if (si.ssi_signo == SIGTERM) {
-        syslog(LOG_NOTICE, "SIGTERM");  /* syslog безопасен здесь */
-        running = 0;
-    }
-}
+timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
+timerfd_settime(fd, 0, &ts, NULL); /* период = 30 с */
 ```
 
-Преимущества:
+`CLOCK_MONOTONIC` — не прыгает при NTP-синхронизации и `hwclock`.
 
-- Обработка сигнала происходит в основном потоке, в нужный момент.
-- Доступны все функции, не только async-signal-safe.
-- Один `poll()` ждёт и данные UART, и сигналы — без гонок.
+При срабатывании: читаем `uint64_t` (число пропущенных тиков, обычно 1),
+вызываем `on_watchdog_tick()`:
 
-### SIGCHLD
-
-В Фазе 3 `omxplayer` запускается через `posix_spawn()`. Когда он падает
-или завершается, ядро посылает `SIGCHLD` родительскому процессу.
-Через signalfd мы получаем это как POLLIN на sig_fd и вызываем
-`video_player_check_and_restart()` — без async-signal-safe ограничений.
+1. Логируем статистику фреймов и состояние omxplayer — видно в `journalctl` при диагностике в поле.
+2. `renderer_keepalive()` — пустая DispmanX-транзакция. Митигирует **P-28**: VideoCore IV
+   переходит в dormant при длительном отсутствии активности и останавливает видео.
 
 ---
 
-## timerfd: watchdog tick
+## Уведомления: двухуровневый timerfd
 
-```c
-timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK)
-timerfd_settime(fd, 0, &ts, NULL)   /* период = WATCHDOG_INTERVAL_S */
+```mermaid
+sequenceDiagram
+    participant MI as media-ingest
+    participant FIFO as FD_FIFO
+    participant Loop as poll loop
+    participant R as renderer
+    participant NT as FD_NOTIF (timerfd)
+
+    MI->>FIFO: write(MEDIA_DONE)
+    FIFO->>Loop: POLLIN
+    Loop->>R: renderer_show_png(NOTIFICATION, notif_success.png)
+    Loop->>NT: timerfd_settime(delay=4s)
+
+    Note over NT: 4 секунды...
+
+    NT->>Loop: POLLIN
+    Loop->>R: renderer_hide(NOTIFICATION)
 ```
 
-`CLOCK_MONOTONIC` — монотонные часы, не прыгают при смене системного времени
-(NTP-синхронизация, `hwclock`). Для периодических задач всегда лучше чем
-`CLOCK_REALTIME`.
-
-При срабатывании таймера `poll()` вернёт POLLIN на timer_fd. Читаем uint64_t —
-число пропущенных тиков (обычно 1). Вызываем `on_watchdog_tick()`.
-
-Зачем watchdog лог каждые 30 секунд:
-
-- При диагностике в поле (без live UART к устройству) нужно понять
-  работает ли демон и получает ли фреймы от STM32.
-- `journalctl -u indicator --since "10 minutes ago"` сразу покажет
-  последние счётчики фреймов.
+`FD_NOTIF` — one-shot timerfd: взводится при каждом новом уведомлении,
+сбрасывается при `MEDIA_CLEAR`. Автоскрытие работает без sleep и без
+дополнительного потока.
 
 ---
 
-## Порядок инициализации и почему он важен
+## Зачем `#define _GNU_SOURCE`
 
-```bash
-1. config_load()      — конфиг нужен всем остальным
-2. state_init()       — до первого фрейма
-3. signalfd           — до запуска любых дочерних процессов
-4. timerfd            — не критично, но до event loop
-5. video_player_open  — Фаза 3 (дочерний процесс)
-6. renderer_init      — Фаза 4 (захватывает DispmanX display)
-7. audio_player_open  — Фаза 5 (pthread)
-8. uart_open          — последним: только после готовности всех потребителей
-```
+| Символ | Заголовок | Почему |
+|---|---|---|
+| `signalfd()`, `SFD_*` | `<sys/signalfd.h>` | Linux-specific |
+| `timerfd_create()`, `TFD_*` | `<sys/timerfd.h>` | Linux-specific |
+| `CLOCK_MONOTONIC` | `<time.h>` | POSIX, но glibc скрывает без `_GNU_SOURCE` |
+| `sigemptyset`, `sigprocmask` | `<signal.h>` | POSIX.1-2001, clangd не видит без флага |
 
-UART открывается последним намеренно. Иначе `on_uart_frame()` может быть
-вызван до инициализации renderer или audio — и упасть на NULL-дереференсе.
+`#define _GNU_SOURCE` — **до любых `#include`**. При `-std=gnu11` компилятор
+определяет его неявно, но clangd читает файл без флагов компилятора
+и подчёркивает символы красным без явного define.
 
 ---
 
-## Как это взаимодействует с systemd
+## Взаимодействие с systemd
 
-```bash
-systemd
-  └── [Restart=always] indicator.service
-         └── /home/pi/indicator/indicator
+```mermaid
+flowchart LR
+    SD["systemd\nRestart=always\nRestartSec=2"]
+    IND["/home/pi/indicator/indicator"]
+    JRN["journald\nLOG_DAEMON"]
+
+    SD -->|"ExecStart"| IND
+    IND -->|"syslog()"| JRN
+    SD -->|"SIGTERM → running=0 → return 0\n(штатная остановка)"| IND
 ```
 
-`indicator.service` содержит `Restart=always, RestartSec=2`. Это значит:
-
-- Если `indicator` завершится с ненулевым кодом — systemd перезапустит через 2с.
-- Если `indicator` завершится с кодом 0 — всё равно перезапустит (Restart=always).
-- Корректное завершение по SIGTERM (`running = 0` → `return 0`) systemd
-  интерпретирует как штатную остановку при `systemctl stop`.
-
-`LOG_DAEMON` в `openlog()` направляет логи в системный журнал:
-
-```bash
-journalctl -u indicator -f        # tail в реальном времени
-journalctl -u indicator -n 100    # последние 100 строк
-journalctl -u indicator --since "1 hour ago"
-```
-
-Уровни `syslog`:
-
-| Уровень | Когда |
+| Уровень syslog | Когда |
 |---|---|
 | `LOG_CRIT` | Ошибка запуска, невозможно продолжить |
 | `LOG_ERR` | Ошибка устройства (UART, DispmanX) |
 | `LOG_WARNING` | Ошибка разбора фрейма, нештатная ситуация |
-| `LOG_NOTICE` | Старт, стоп, смена режима |
-| `LOG_INFO` | Каждый фрейм (нормальная работа) |
-| `LOG_DEBUG` | SIGCHLD, неизвестные opcode, детали |
+| `LOG_NOTICE` | Старт, стоп, смена режима, watchdog tick |
+| `LOG_INFO` | Каждый фрейм (нормальная работа), конфиг при старте |
+| `LOG_DEBUG` | SIGCHLD, неизвестные opcode, fast-update детали |
 
-В продакшне `LOG_DEBUG` отключается через `rsyslog.conf` или `journald.conf`,
-чтобы не засорять журнал.
+```bash
+journalctl -u indicator -f                    # tail в реальном времени
+journalctl -u indicator -n 100                # последние 100 строк
+journalctl -u indicator --since "10 min ago"  # диагностика в поле
+journalctl -u indicator -f | grep watchdog    # только watchdog тики
+```

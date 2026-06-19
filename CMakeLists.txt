@@ -17,7 +17,7 @@ option(INDICATOR_WARNINGS_AS_ERRORS "Предупреждения = ошибки
 
 # ─── Версия ──────────────────────────────────────────────────────────────────
 
-set(INDICATOR_VERSION "1.0.0")
+set(INDICATOR_VERSION "2.0.0")
 
 execute_process(
     COMMAND git rev-parse --short HEAD
@@ -115,6 +115,8 @@ if(INDICATOR_PLATFORM_DISPMANX)
 
     add_executable(indicator
         src_indicator/main.c
+        src_indicator/app_handlers.c
+        src_indicator/app_render.c
         src_indicator/audio/audio.c
         src_indicator/player/video_player.c
         src_indicator/media/media_ipc.c
@@ -135,6 +137,24 @@ if(INDICATOR_PLATFORM_DISPMANX)
     )
 
 
-endif()
+else()
+    # ── LSP stub: даёт clangd compile_commands для app_*.c на хосте ──────────
+    # Таргет не собирается (он не линкуется без DispmanX) — нужен только для
+    # генерации compile_commands.json с корректными -I путями.
+    # EXCLUDE_FROM_ALL: не входит в `cmake --build .`, не ломает just build::test.
+    add_library(indicator_lsp_stub OBJECT EXCLUDE_FROM_ALL
+        src_indicator/main.c
+        src_indicator/app_handlers.c
+        src_indicator/app_render.c
+        src_indicator/audio/audio.c
+        src_indicator/player/video_player.c
+        src_indicator/media/media_ipc.c
+    )
+    target_include_directories(indicator_lsp_stub PRIVATE src_indicator)
+    target_compile_definitions(indicator_lsp_stub PRIVATE
+        INDICATOR_VERSION="lsp"
+        INDICATOR_GIT_SHA="lsp"
+    )
+ endif()
 
 
