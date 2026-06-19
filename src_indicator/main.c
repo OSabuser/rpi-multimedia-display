@@ -197,7 +197,7 @@ static const char *mode_to_rel_path(indicator_mode_t mode)
     case MODE_EVACUATION:
         return "modes/evacuation.png";
     case MODE_UPS_MALFUNCTION:
-        return "modes/malfunction.png";
+        return "modes/ups_malfunction.png";
     case MODE_DISPATCH_CALL:
         return "modes/calling.png";
     case MODE_DISPATCH_ANSWER:
@@ -276,12 +276,7 @@ static void renderer_apply_elevator(app_t *p_app, const state_update_result_t *p
     /* ── Цифры этажа ──────────────────────────────────────────────────── */
     if (p_upd->floor_changed || p_upd->first_frame)
     {
-        (void) snprintf(path, sizeof(path), "%s/chars/%u.png", rd, (unsigned) p_payload->left_char);
-        renderer_show_png(rdr, SPRITE_DIGIT_LEFT, path);
-
-        (void) snprintf(path, sizeof(path), "%s/chars/%u.png", rd,
-                        (unsigned) p_payload->right_char);
-        renderer_show_png(rdr, SPRITE_DIGIT_RIGHT, path);
+        renderer_show_digit(rdr, p_payload->left_char, p_payload->right_char);
     }
 
     /* ── Стрелка направления ──────────────────────────────────────────── */

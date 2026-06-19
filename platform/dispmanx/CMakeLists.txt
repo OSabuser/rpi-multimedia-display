@@ -33,6 +33,9 @@ endif()
 
 add_library(dispmanx_renderer STATIC
     renderer_impl.c
+    font_renderer.c
+    fonts/fonts.c
+    fonts/CalSans260.c
     layers/image.c
     layers/imageLayer.c
     layers/loadpng.c
@@ -44,8 +47,11 @@ target_include_directories(dispmanx_renderer PUBLIC
 )
 
 # Приватные includes: Duncan headers + DispmanX + libpng/zlib из Pi sysroot
+# fonts/ — заголовки шрифтов (fonts.h, CalSans260.h)
 target_include_directories(dispmanx_renderer PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/layers
+    ${CMAKE_CURRENT_SOURCE_DIR}/fonts
 )
 target_include_directories(dispmanx_renderer SYSTEM PRIVATE
     /opt/vc/include
@@ -63,7 +69,7 @@ target_link_libraries(dispmanx_renderer PUBLIC
     "-L${PI_USR_SYSROOT}/lib/arm-linux-gnueabihf" "-lpng16" "-lz"
 )
 
-# Предупреждения: применяем только к нашему renderer_impl.c
+# Предупреждения: применяем к нашему коду
 apply_warnings(dispmanx_renderer)
 
 # Vendored Duncan-код: подавить все предупреждения
@@ -71,5 +77,11 @@ set_source_files_properties(
     layers/image.c
     layers/imageLayer.c
     layers/loadpng.c
+    PROPERTIES COMPILE_OPTIONS "-w"
+)
+
+# Шрифтовые данные — сгенерированы lcd-image-converter, подавить предупреждения
+set_source_files_properties(
+    fonts/CalSans260.c
     PROPERTIES COMPILE_OPTIONS "-w"
 )

@@ -76,6 +76,6 @@ possible_values = [
 "1600кг 21чел.",
 ]
 default = "СКРЫТО"
-current = "1150кг 15чел."
+current = "СКРЫТО"
 should_sync = "true"
 

@@ -10,6 +10,8 @@
  */
 #pragma once
 
+#include "protocol/types.h" /* char_code_t */
+
 /* ─── Конфигурация рендерера ──────────────────────────────────────────────── */
 
 #define RENDERER_RESOURCES_DIR_MAX 256U
@@ -37,13 +39,13 @@ typedef struct renderer_config_s
  * Идентификатор DispmanX-слота.
  *
  * Порядок соответствует z-слоям:
- *   BACKGROUND   Z=2  — BACK.png (всегда виден, 600×1024)
- *   MODE         Z=3  — mode-иконка (600×1024) или скрыт
- *   WEIGHT       Z=4  — load_N.png (237×59)
- *   DIGIT_LEFT   Z=4  — chars/N.png (202×346) ← fast_update
- *   DIGIT_RIGHT  Z=4  — chars/N.png (202×346) ← fast_update
- *   ARROW        Z=4  — arrows/*.png (188×209) ← fast_update
- *   NOTIFICATION Z=5  — USB-баннер (Фаза 7)
+*   BACKGROUND   Z=2  — BACK.png (всегда виден, 1080×1920)
+*   MODE         Z=3  — mode-иконка (1080×1920) или скрыт
+*   WEIGHT       Z=4  — load_N.png (размер уточняется, ожидает PNG)
+*   DIGIT_LEFT   Z=4  — font renderer CalSans260 (буфер 400×191) ← fast_update
+*   DIGIT_RIGHT  Z=4  — reserved, не используется (рисуется в DIGIT_LEFT); до F6
+*   ARROW        Z=4  — arrows/_.png (размер уточняется, ожидает PNG) ← fast_update
+*   NOTIFICATION Z=5  — USB-баннер (1080×270)
  */
 typedef enum sprite_slot_e
 {
@@ -69,13 +71,13 @@ typedef struct renderer_s renderer_t;
  * @param cfg  Конфигурация (копируется внутрь).
  * @return     Указатель на renderer_t или NULL при ошибке.
  */
-renderer_t *renderer_create(const renderer_config_t *cfg);
+renderer_t *renderer_create(const renderer_config_t *p_cfg);
 
 /**
  * renderer_destroy — уничтожить все слоты, закрыть display, вызвать bcm_host_deinit().
  * Безопасен при NULL.
  */
-void renderer_destroy(renderer_t *r);
+void renderer_destroy(renderer_t *p_r);
 
 /**
  * renderer_show_png — показать PNG-файл в заданном слоте.
@@ -89,13 +91,13 @@ void renderer_destroy(renderer_t *r);
  *
  * @param path  Абсолютный путь к PNG-файлу.
  */
-void renderer_show_png(renderer_t *r, sprite_slot_t slot, const char *path);
+void renderer_show_png(renderer_t *p_r, sprite_slot_t slot, const char *p_path);
 
 /**
  * renderer_hide — скрыть слот (destroyImageLayer если initialized).
  * Безопасен при уже скрытом слоте.
  */
-void renderer_hide(renderer_t *r, sprite_slot_t slot);
+void renderer_hide(renderer_t *p_r, sprite_slot_t slot);
 
 /**
  * renderer_keepalive — отправить пустой DispmanX update.
@@ -108,4 +110,23 @@ void renderer_hide(renderer_t *r, sprite_slot_t slot);
  *
  * Безопасен при NULL-указателе.
  */
-void renderer_keepalive(renderer_t *r);
+void renderer_keepalive(renderer_t *p_r);
+
+/**
+* renderer_show_digit — отрисовать номер этажа через font renderer (CalSans260).
+*
+* Принимает два кода символа от STM32 (left, right), строит UTF-8 строку,
+* рендерит в ARGB8888-буфер 400×191 px, выводит в слот SPRITE_DIGIT_LEFT.
+* SPRITE_DIGIT_RIGHT не используется на HD-варианте.
+*
+* Поведение:
+*   - Оба CHAR_BLANK → renderer_hide(SPRITE_DIGIT_LEFT), слот скрыт.
+*   - Символы без глифа в CalSans260 → пропускаются (не вызывают ошибку).
+*   - Строка центрируется по X внутри буфера 400 px.
+*   - fast_update: первый вызов создаёт ресурс, последующие обновляют пиксели.
+*
+* @param r      renderer из renderer_create()
+* @param left   код левого символа  (char_code_t, types.h)
+* @param right  код правого символа (char_code_t, types.h)
+*/
+void renderer_show_digit(renderer_t *p_r, char_code_t left, char_code_t right);

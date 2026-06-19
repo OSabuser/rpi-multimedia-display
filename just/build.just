@@ -105,10 +105,10 @@ pi-debug:
 check-format:
     #!/usr/bin/env bash
     set -euo pipefail
-    # src/ — domain, transport, main
+    # src_indicator/ — domain, transport, main
     # platform/ — DispmanX renderer
     # tools/ — диагностические утилиты
-    files=$(find src platform tools -name '*.c' -o -name '*.h' | sort)
+    files=$(find src_indicator src_media_ingest platform tools -name '*.c' -o -name '*.h' | sort)
     if [ -z "$files" ]; then
         echo "  ⚠️  No C files found"
         exit 0
@@ -132,7 +132,7 @@ check-format:
 format:
     #!/usr/bin/env bash
     set -euo pipefail
-    files=$(find src platform tools -name '*.c' -o -name '*.h' | sort)
+    files=$(find src_indicator src_media_ingest platform tools -name '*.c' -o -name '*.h' | sort)
     count=0
     while IFS= read -r f; do
         clang-format -i "$f"
@@ -148,7 +148,8 @@ format:
 [doc('Удалить все артефакты сборки')]
 [group('utils')]
 clean:
-    rm -rf "{{BUILD_DIR}}"
+    rm -rf "{{BUILD_DIR}}/pi"
+    rm -rf "{{BUILD_DIR}}/host"
     @echo "  ✅  build/ removed"
 
 [doc('Сгенерировать PNG-уведомления для SPRITE_NOTIFICATION (требует imagemagick)')]

@@ -109,38 +109,15 @@ echo "── Background ──────────────────�
 check_png "$RESOURCES_DIR/BACK.png" "BACK.png"
 echo ""
 
-# ─── 2. Chars (0–37) ─────────────────────────────────────────────────────────
 
-echo "── Chars (0–37, total 38) ──────────────────────────────"
-MISSING_CHARS=""
-for i in $(seq 0 37); do
-    path="$RESOURCES_DIR/chars/${i}.png"
-    CHECKED=$((CHECKED + 1))
-    if [[ ! -f "$path" ]]; then
-        fail "MISSING: chars/${i}.png"
-        MISSING_CHARS="$MISSING_CHARS $i"
-    elif [[ $(stat -c%s "$path" 2>/dev/null || stat -f%z "$path") -eq 0 ]]; then
-        fail "EMPTY:   chars/${i}.png"
-    else
-        sig=$(xxd -p -l 8 "$path" 2>/dev/null || echo "")
-        if [[ "$sig" != "89504e470d0a1a0a" ]]; then
-            fail "INVALID PNG: chars/${i}.png"
-        fi
-    fi
-done
-if [[ -z "$MISSING_CHARS" ]]; then
-    ok "All 38 char PNGs present and valid"
-fi
-echo ""
-
-# ─── 3. Arrows ───────────────────────────────────────────────────────────────
+# ─── 2. Arrows ───────────────────────────────────────────────────────────────
 
 echo "── Arrows ──────────────────────────────────────────────"
 check_png "$RESOURCES_DIR/arrows/up.png"   "arrows/up.png"
 check_png "$RESOURCES_DIR/arrows/down.png" "arrows/down.png"
 echo ""
 
-# ─── 4. Weights (load_0 – load_15) ───────────────────────────────────────────
+# ─── 3. Weights (load_0 – load_15) ───────────────────────────────────────────
 
 echo "── Weights (load_0–load_15, total 16) ──────────────────"
 MISSING_WEIGHTS=""
@@ -164,7 +141,7 @@ if [[ -z "$MISSING_WEIGHTS" ]]; then
 fi
 echo ""
 
-# ─── 5. Modes ────────────────────────────────────────────────────────────────
+# ─── 4. Modes ────────────────────────────────────────────────────────────────
 
 echo "── Modes ───────────────────────────────────────────────"
 # Маппинг: indicator_mode_t → файл (MODE_CONN_LOST и MODE_NORMAL → нет файла)
@@ -177,7 +154,7 @@ declare -A MODE_FILES=(
     ["MODE_FIREMANS(6)"]="modes/fireman.png"
     ["MODE_SERVICE(7)"]="modes/inspection.png"
     ["MODE_EVACUATION(8)"]="modes/evacuation.png"
-    ["MODE_UPS_MALFUNCTION(9)"]="modes/malfunction.png"  # переиспользует malfunction
+    ["MODE_UPS_MALFUNCTION(9)"]="modes/ups_malfunction.png"
     ["MODE_DISPATCH_CALL(100)"]="modes/calling.png"
     ["MODE_DISPATCH_ANSWER(101)"]="modes/talking.png"
 )

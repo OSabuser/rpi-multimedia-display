@@ -279,10 +279,15 @@ deploy-tools:
         echo "  ❌  uart_rx_dump not found. Run: just build::pi-dump"
         exit 1
     fi
+    if [ ! -f "{{ BUILD_DIR }}/pi/notif_test" ]; then
+        echo "  ❌  notif_test not found. Run: just build::pi-notif-test"
+        exit 1
+    fi
     echo "  📤  Deploying tools to {{ _pi }}:{{ PI_DIR }}/tools/..."
     ssh "{{ _pi }}" "mkdir -p {{ PI_DIR }}/tools"
     rsync -avz --progress \
         "{{ BUILD_DIR }}/pi/uart_rx_dump" \
+        "{{ BUILD_DIR }}/pi/notif_test" \
         "{{ _pi }}:{{ PI_DIR }}/tools/"
     rsync -avz --progress \
         deploy/tools/MUp-rpi0 \

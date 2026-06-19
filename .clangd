@@ -1,16 +1,13 @@
 # .clangd
-#
 # Три профиля compile_commands:
-#
 #   tests/          → build/host  (clang x86/arm64, ASan, полные системные заголовки)
 #   src/            → build/host  (domain-код платформонезависим, host заголовки идеальны)
 #   platform/       → build/pi   (DispmanX, bcm_host — нужны /opt/vc заголовки)
-#
 # Почему src/ → build/host, а не build/pi:
 #   arm-zig-cc хранит системные заголовки внутри /opt/zig/lib/libc/include/
 #   clangd не знает этот путь без --query-driver, который работает нестабильно
 #   с shell-wrapper скриптами. Domain-код — чистый C11 без платформозависимости,
-#   host compile_commands даёт идеальный LSP без ложных ошибок.
+# host compile_commands даёт идеальный LSP без ложных ошибок.
 
 ---
 # Тесты — host (clang, x86/arm64, ASan)
@@ -26,9 +23,9 @@ Diagnostics:
   UnusedIncludes: None
 
 ---
-# Domain-код — тоже host (платформонезависимый C11)
+# Domain-код — тоже host (платформонезависимый C11, indicator + media_ingest)
 If:
-  PathMatch: "src/.*\\.(c|h)"
+  PathMatch: "(src_indicator|src_media_ingest)/.*\\.(c|h)"
 CompileFlags:
   CompilationDatabase: build/host
 

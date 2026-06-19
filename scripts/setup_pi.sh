@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# scripts/setup_pi.sh — первичная настройка Raspberry Pi Zero W
+# scripts/setup_pi.sh — первичная настройка Raspberry Pi Zero 2W
 # Запускать: just pi::setup-pi  (через SSH с sudo)
 #
 # Выполняется ОДИН РАЗ на свежем Raspbian Buster Lite.
@@ -39,7 +39,6 @@ apt-get full-upgrade -y -q
 ok "System updated"
 
 # ─── 2. Пакеты ───────────────────────────────────────────────────────────────
-
 step "Установка пакетов"
 apt-get install -y -q \
     omxplayer \
@@ -224,7 +223,6 @@ ok "sudoers configured for fbi"
 step "Создание /data структуры"
 mkdir -p \
     "$DATA/pi_nku_configs" \
-    "$DATA/resources/chars" \
     "$DATA/resources/arrows" \
     "$DATA/resources/modes" \
     "$DATA/resources/weights" \

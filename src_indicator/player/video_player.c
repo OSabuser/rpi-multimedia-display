@@ -52,18 +52,11 @@ struct video_player_s
 
 static int spawn_omxplayer(video_player_t *p_vp)
 {
-    char *argv[] = { (char *) "omxplayer",
-                     (char *) "--layer",
-                     (char *) "1",
-                     (char *) "--no-keys",
-                     (char *) "--loop",
-                     (char *) "--no-osd",
-                     (char *) "--orientation",
-                     (char *) "270",
-                     (char *) "--win",
-                     p_vp->win_arg,
-                     p_vp->video_path,
-                     NULL };
+    char *argv[] = { (char *) "omxplayer", (char *) "--layer",
+                     (char *) "1",         (char *) "--no-keys",
+                     (char *) "--loop",    (char *) "--no-osd",
+                     (char *) "--win",     p_vp->win_arg,
+                     p_vp->video_path,     NULL };
 
     /*
      * Отдельная process group: PGID = PID дочернего (bash-скрипта).
