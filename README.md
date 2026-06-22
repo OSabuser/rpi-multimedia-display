@@ -1,17 +1,18 @@
-# RPi Multimedia Display
+# Lift Indicator HD
 
-Встраиваемая система отображения состояния лифта на базе Raspberry Pi Zero W.
-Получает данные от STM32 по UART, отображает этаж и режим работы на HDMI-дисплее,
-воспроизводит голосовые объявления и позволяет обновлять фоновое видео с USB-носителя.
+Встраиваемая система отображения состояния лифта на базе Raspberry Pi Zero 2W.
+Получает данные от STM32 по UART, отображает этаж и режим работы на HDMI-дисплее
+1080×1920, воспроизводит голосовые объявления и позволяет обновлять фоновое видео
+с USB-носителя.
 
 ---
 
 ## Возможности
 
-- **Дисплей** — DispmanX-оверлей (7 слотов) поверх фонового видео: цифры этажа, стрелка направления, иконки нештатных режимов (9 режимов), диспетчерская связь, информационные уведомления
+- **Дисплей** — DispmanX-оверлей (7 слотов) поверх фонового видео: цифры этажа через font renderer (CalSans260), стрелка направления, иконки нештатных режимов (9 режимов), диспетчерская связь, информационные уведомления
 - **Аудио** — голосовые объявления этажей (в т.ч. составные: 21–49, П1–П9, −1..−9), звуки событий, фоновая музыка; приоритетная очередь с вытеснением
 - **USB Media Ingest** — замена фонового видео с FAT32/exFAT/ext4 носителя; поддержка склейки нескольких MP4-файлов; индикация прогресса на экране
-- **Надёжность** — read-only rootfs (overlayfs), watchdog, автоперезапуск через systemd, keepalive для VideoCore IV
+- **Надёжность** — read-only rootfs (overlayfs), watchdog keepalive (VideoCore IV P-28), автоперезапуск через systemd
 - **Provisioning** — factory image: уникальный hostname из SoC serial, SSH keys, WiFi seed из `/boot/`, TUI-меню настройки параметров MCU
 
 ---
@@ -20,11 +21,11 @@
 
 | Компонент | Модель |
 |---|---|
-| SBC | Raspberry Pi Zero W Rev 1.1 (ARM1176JZF-S · ARMv6ZK) |
-| ОС | Raspbian Buster Lite (Debian 10) |
-| Дисплей | HDMI, 600×1024 |
-| Аудио | MAX98357A (Adafruit Speaker Bonnet, I2S) |
-| MCU | STM32 на несущей плате, UART `/dev/ttyAMA0`, 115200 8N1 |
+| SBC | Raspberry Pi Zero 2W (BCM2710A1 · 4× Cortex-A53 · ARMv8-A 32-bit) |
+| ОС | Raspbian Buster Lite 2023-05-03 (Debian 10, armhf) |
+| Дисплей | HDMI, 1080×1920 (портрет, `display_hdmi_rotate=3`) |
+| Аудио | hifiberry-dac (I2S, несущая плата) |
+| MCU | STM32 на несущей плате, UART `/dev/serial0`, 115200 8N1 |
 | Накопитель | SD-карта ≥16 GB (3 раздела: `/boot` · rootfs · `/data`) |
 
 ---
@@ -35,7 +36,7 @@
 
 ```bash
 # 1. Прошить factory image через balenaEtcher
-indicator-base-YYYYMMDD.img.gz → SD-карта
+indicator-hd-base-YYYYMMDD.img.gz → SD-карта
 
 # 2. Положить WiFi credentials (опционально):
 cat > /Volumes/boot/wpa_supplicant.conf << 'EOF'
@@ -52,7 +53,7 @@ EOF
 #    Старт 2: устройство готово к работе (~2 мин от включения)
 ```
 
-После загрузки устройство доступно по `indicator-<serial>.local`.
+После загрузки устройство доступно по `indicator-hd-<serial>.local`.
 
 ### Обновление ПО на production устройстве
 
@@ -65,48 +66,67 @@ just pi::update-finish   # overlayfs ON → reboot (rootfs protected)
 
 ### Замена фонового видео
 
-Вставить USB-носитель с `.mp4` файлами (H.264 MP4) — устройство обработает и заменит видео автоматически. Подробности: [`docs/MEDIA_GUIDE.md`](docs/MEDIA_GUIDE.md).
+Вставить USB-носитель с `.mp4` файлами (H.264 MP4, уровень ≤ 4.1) — устройство обработает и заменит видео автоматически. Подробности: [`MEDIA_GUIDE.md`](MEDIA_GUIDE.md).
 
 ---
 
 ## Архитектура
 
-```bash
-  Несущая плата
-  ┌──────────────┐      UART (115200 8N1)
-  │  STM32 MCU   │ ─────────────────────────────────────────────────┐
-  └──────────────┘                                                   │
-                                                                     ▼
-  USB-носитель                                            ┌─────────────────────┐
-  (MP4-файлы) ──► media-ingest ──► FIFO ──► indicator ──► DispmanX + omxplayer
-                  (демон,            IPC    (демон,               │
-                  CAP_SYS_ADMIN)            poll loop)            │
-                       │                        │           HDMI-дисплей
-                  /data/videos/           aplay/amixer        600×1024
-                  output.mp4                    │
-                                          MAX98357A (I2S)
-                                          Динамик
+```mermaid
+flowchart TD
+    STM32["STM32 MCU\n(несущая плата)"]
+    USB["USB-носитель\n(MP4-файлы)"]
+    IND["indicator\n(демон, poll loop)"]
+    MI["media-ingest\n(демон, CAP_SYS_ADMIN)"]
+    FIFO["FIFO IPC\n/run/indicator/\nmedia_status.fifo"]
+    DMX["DispmanX\n+ omxplayer"]
+    HDMI["HDMI-дисплей\n1080×1920"]
+    AUDIO["hifiberry-dac\n(I2S)"]
+    DATA["/data/videos/\noutput.mp4"]
+
+    STM32 -->|"UART 115200 8N1\n/dev/serial0"| IND
+    USB -->|inotify /dev| MI
+    MI -->|"mount + ffmpeg -c copy"| DATA
+    DATA --> DMX
+    MI -->|"write(status)"| FIFO
+    FIFO -->|"POLLIN FD_FIFO"| IND
+    IND --> DMX
+    IND -->|"aplay"| AUDIO
+    DMX --> HDMI
 ```
 
 **Два systemd-сервиса:**
 
-`indicator.service` — основной демон. Однопоточный `poll()` на `uart_fd · fifo_fd · signalfd · timerfd`. DispmanX-рендерер, аудио-pthread, omxplayer как supervised child.
+`indicator.service` — основной демон. Однопоточный `poll()` на пяти fd: `uart · fifo · signalfd · timerfd · notif_timerfd`. DispmanX-рендерер с font renderer (CalSans260), аудио-pthread, omxplayer как supervised child.
 
-`media-ingest.service` — USB ingest демон. inotify на `/dev`, mount(2), ffmpeg `-c copy`, rename(). Изолирован от indicator; общается только через FIFO.
+`media-ingest.service` — USB ingest демон. inotify на `/dev`, `mount(2)`, `ffmpeg -c copy`, `rename()`. Изолирован от indicator — общается только через FIFO.
 
-**Файловая система:**
+### Файловая система
 
-```bash
-/boot/          ← FAT32 (p1): ядро, overlayfs hook, WiFi seed
-/               ← ext4 (p2): rootfs, защищён overlayfs в production
-/data/          ← ext4 (p3): writable, persistent
-  ├── pi_nku_configs/   ← TOML-конфиги (bind → ~/indicator/pi_nku_configs/)
-  ├── resources/        ← PNG-ресурсы (bind → ~/indicator/resources/)
-  ├── sounds/           ← WAV-файлы   (bind → ~/indicator/sounds/)
-  └── videos/           ← output.mp4  (bind → ~/indicator/videos/)
+```mermaid
+graph LR
+    P1["/boot\nFAT32 p1\nядро, overlayfs hook\nWiFi seed"]
+    P2["\n/ext4 p2\nrootfs\noverlafs в production"]
+    P3["/data\next4 p3\nwritable, persistent"]
+
+    P3 --- CFG["/data/pi_nku_configs/\nnku_scheme.toml\nvideo.toml\nrenderer.toml\npi_scheme.toml"]
+    P3 --- RES["/data/resources/\nPNG-спрайты"]
+    P3 --- SND["/data/sounds/\nWAV-файлы"]
+    P3 --- VID["/data/videos/\noutput.mp4"]
 ```
 
-Подробная архитектура event loop и ALSA стека: [`docs/DEV_ARCH.md`](docs/DEV_ARCH.md).
+### Z-слои DispmanX
+
+| Z | Слот | Содержимое | Размер |
+|---|---|---|---|
+| 1 | omxplayer | фоновое видео | 1080×1920 |
+| 2 | `SPRITE_BACKGROUND` | `BACK.png` | 1080×1920 |
+| 3 | `SPRITE_MODE` | иконка режима | 1080×1920 |
+| 4 | `SPRITE_WEIGHT` | грузоподъёмность | ~ |
+| 4 | `SPRITE_DIGIT_LEFT` | цифра этажа (CalSans260) | 400×191 |
+| 4 | `SPRITE_DIGIT_RIGHT` | резерв (F6) | — |
+| 4 | `SPRITE_ARROW` | стрелка up/down | 188×209 |
+| 5 | `SPRITE_NOTIFICATION` | уведомление | 1080×270 |
 
 ---
 
@@ -123,7 +143,7 @@ just pi::update-finish   # overlayfs ON → reboot (rootfs protected)
 
 ```bash
 git clone --recurse-submodules <repo>
-cd rpi-multimedia-display
+cd lift-indicator-hd
 
 # Первичная настройка хоста (SSH + sysroot + Docker image)
 just pi::bootstrap
@@ -140,7 +160,7 @@ just pi::enable-services
 
 ```bash
 # Собрать (внутри devcontainer)
-just build::pi              # indicator + media_ingest + uart_rx_dump
+just build::pi              # indicator + media_ingest + uart_rx_dump + notif_test
 just build::test            # unit-тесты на хосте (ASan + UBSan)
 
 # Задеплоить (с хоста)
@@ -158,7 +178,7 @@ just pi::check-resources    # валидация всех ресурсов на 
 
 ### Кросс-компилятор
 
-`zig cc -target arm-linux-gnueabihf -mcpu=arm1176jzf_s` — компилирует crt-объекты точно под ARM1176JZF-S. Стандартный `arm-linux-gnueabihf-gcc` содержит ARMv7 Thumb-2 объекты → segfault до `main()` на ARMv6.
+`zig cc -target arm-linux-gnueabihf -mcpu=cortex_a53` — компилирует crt-объекты точно под Cortex-A53 с hard-float ABI. Стандартный `arm-linux-gnueabihf-gcc` тоже работает на A53 (ARMv7 Thumb-2 легален), но zig обеспечивает однородность инфраструктуры с веткой `dev-pi`.
 
 ---
 
@@ -167,42 +187,37 @@ just pi::check-resources    # валидация всех ресурсов на 
 ```bash
 .
 ├── src_indicator/          ← C-код демона indicator
-│   ├── main.c              ← event loop, composition root
+│   ├── main.c              ← composition root: инициализация, poll loop, cleanup
+│   ├── app_handlers.c      ← on_uart_frame, on_media_status, on_watchdog_tick
+│   ├── app_render.c        ← renderer_apply_elevator/mode/dispatch
+│   ├── app_private.h       ← общие типы app_t / stats_t, forward-объявления
 │   ├── protocol/           ← UART parser, types, CRC-16
 │   ├── domain/             ← floor decoder, sound map, state machine
 │   ├── config/             ← TOML конфиг-загрузчик
-│   ├── audio/              ← pthread audio player
+│   ├── audio/              ← pthread audio player (aplay)
 │   ├── player/             ← omxplayer supervisor
-│   ├── transport/          ← UART transport
+│   ├── transport/          ← UART transport (termios)
 │   ├── media/              ← FIFO IPC (indicator side)
-│   └── renderer/           ← renderer.h (интерфейс)
+│   └── renderer/           ← renderer.h (публичный интерфейс)
 ├── src_media_ingest/       ← C-код демона media-ingest
 │   ├── main.c              ← конечный автомат, poll loop
 │   ├── usb_watcher.c/.h    ← inotify /dev
 │   ├── mounter.c/.h        ← mount(2) / umount2
 │   ├── ffmpeg_runner.c/.h  ← find MP4, spawn ffmpeg, rename
 │   └── status_pipe.c/.h    ← запись статуса в FIFO
-├── platform/dispmanx/      ← DispmanX renderer (bcm_host, Andrew Duncan MIT)
+├── platform/dispmanx/      ← DispmanX renderer + font renderer (bcm_host)
+│   ├── renderer_impl.c     ← реализация слотов, ресурсов, fast_update
+│   ├── font_renderer.c/.h  ← адаптер CalSans260 → DispmanX буфер
+│   └── fonts/              ← CalSans260 (RLE ARGB8888, 260pt)
 ├── tests/                  ← Unity unit-тесты (6 суитов)
 ├── tools/                  ← uart_rx_dump, notif_test
-├── deploy/                 ← ресурсы, звуки, конфиги, systemd units, скрипты
-│   ├── resources/          ← PNG: chars, arrows, modes, weights, notifications
-│   ├── sounds/             ← WAV: события, анонсы этажей, музыка
-│   ├── configs/            ← nku_scheme.toml, renderer.toml, video.toml, …
-│   └── systemd/            ← *.service, indicator.target
 ├── scripts/                ← setup_pi.sh, first_boot.sh, smoke_test.sh, …
 ├── just/                   ← build.just, pi.just, ci.just
-├── build-env/              ← Dockerfile, Pi sysroot (.gitignore)
 ├── third_party/
 │   └── config_toolset/     ← pi_nku_sync, pi_nku_menu (Rust, submodule)
-└── docs/
-    ├── DEV_ARCH.md         ← рабочее окружение, toolchain, just-команды
-    ├── MEDIA_GUIDE.md      ← руководство по обновлению видео через USB
-    ├── plan/
-    │   ├── MASTER_PLAN_V1.md   ← архитектурные решения v1
-    │   └── v1_phases/          ← отчёты фаз 0–7, Phase Deploy, Phase 6
-    └── test/
-        └── v1/                 ← интеграционные чеклисты
+├── *.toml                  ← nku_scheme, renderer, video, pi_scheme, menu_style
+├── *.service               ← systemd units
+└── MASTER_PLAN__HD.md      ← архитектурные решения, roadmap фаз F0–F6
 ```
 
 ---
@@ -211,27 +226,52 @@ just pi::check-resources    # валидация всех ресурсов на 
 
 | Документ | Описание |
 |---|---|
-| [`docs/DEV_ARCH.md`](docs/DEV_ARCH.md) | Рабочее окружение, toolchain, ALSA стек, UART протокол, all just-команды |
-| [`docs/MEDIA_GUIDE.md`](docs/MEDIA_GUIDE.md) | Замена фонового видео через USB, требования к формату, сценарии |
-| [`CHANGELOG.md`](CHANGELOG.md) | История релизов |
-| `docs/plan/MASTER_PLAN_V1.md` | Архитектурные решения, UART протокол v1, roadmap |
-| `docs/test/v1/` | Интеграционные чеклисты (~107 тестов) |
+| [`MASTER_PLAN__HD.md`](MASTER_PLAN__HD.md) | Архитектурные решения, Z-слои, roadmap фаз F0–F6 |
+| [`MEDIA_GUIDE.md`](MEDIA_GUIDE.md) | Замена фонового видео через USB, требования к формату |
+| [`SYSTEMD_FLOW.md`](SYSTEMD_FLOW.md) | Граф systemd-юнитов, порядок старта, overlayfs |
+| [`MEDIA_INGEST_FLOW.md`](MEDIA_INGEST_FLOW.md) | Конечный автомат media-ingest, FIFO протокол |
+| `src_indicator/README.md` | Event loop, poll fd, инициализация, watchdog, signalfd |
+| `PHASE_F0_REPORT.md` … `PHASE_F2_SESSION_REPORT.md` | Отчёты фаз bring-up |
 
 ---
 
-## Roadmap (v2.0.0)
+## Roadmap
 
-- **Phase 8 — Font renderer**: замена PNG-спрайтов цифр на кастомный C-рендерер; устранение slow path стрелки (P-29)
-- **Phase 9 — Полировка**: рефакторинг `main.c`, fix P-24 (`omxplayer --no-dbus`), CI/CD pipeline
-- **Future**: GPU encode без конкуренции с omxplayer за VideoCore IV
+```mermaid
+gantt
+    dateFormat  YYYY-MM-DD
+    axisFormat  F%e
 
-Известные ограничения текущей версии: [`CHANGELOG.md → Known Issues`](CHANGELOG.md#known-issues).
+    section Завершено
+    F0 Toolchain + сборка      :done, f0, 2026-06-01, 2d
+    F1 Bring-up устройства     :done, f1, after f0, 2d
+    F2 FullHD renderer + fonts :done, f2, after f1, 4d
+
+    section В процессе
+    F2 PNG weights + испытания :active, f2b, 2026-06-19, 3d
+
+    section Далее
+    F3 FullHD video + ingest   :f3, after f2b, 3d
+    F4 Audio + интеграция      :f4, after f3, 2d
+    F5 Deploy v2 factory image :f5, after f4, 2d
+    F6 Trunk-унификация        :f6, after f5, 3d
+```
+
+| Фаза | Статус | Содержание |
+|---|---|---|
+| F0 | ✅ | Toolchain `cortex_a53`, zig wrapper, CMake, сборка |
+| F1 | ✅ | Bring-up 2W, UART, DispmanX, overlayfs |
+| F2 | 🔄 | FullHD renderer, font renderer CalSans260, layout, рефакторинг main.c |
+| F3 | ⏳ | 1080p video loop, media-ingest, температурный контроль |
+| F4 | ⏳ | Аудио-валидация, интеграционные испытания |
+| F5 | ⏳ | Factory image `indicator-hd-base-YYYYMMDD.img.gz` |
+| F6 | ⏳ | Унификация `dev-pi` и `dev-pi2w` в один trunk |
 
 ---
 
 ## Лицензия
 
-Код проекта: MIT.  
-`platform/dispmanx/layers/` — код Andrew Duncan, MIT.  
-`tests/unity/` — Unity Test Framework, MIT.  
+Код проекта: MIT.
+`platform/dispmanx/` — частично код Andrew Duncan, MIT.
+`tests/unity/` — Unity Test Framework, MIT.
 `third_party/config_toolset/` — см. лицензию submodule.

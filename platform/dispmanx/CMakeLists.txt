@@ -65,7 +65,7 @@ target_include_directories(dispmanx_renderer SYSTEM PRIVATE
 #   png16, z  — строки "-L..." и "-lpng16" обходят CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY
 #               и передаются линкеру напрямую
 target_link_libraries(dispmanx_renderer PUBLIC
-    "-L/opt/vc/lib" bcm_host
+    "-L/opt/vc/lib" bcm_host vcos
     "-L${PI_USR_SYSROOT}/lib/arm-linux-gnueabihf" "-lpng16" "-lz"
 )
 

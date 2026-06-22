@@ -89,7 +89,7 @@ pi-debug:
     cmake -B "build/pi-debug" \
         -DCMAKE_TOOLCHAIN_FILE=cmake/Toolchain-RPiZero2W.cmake \
         -DCMAKE_BUILD_TYPE=Debug \
-        -DCMAKE_C_FLAGS="-g3 -O0 -fno-omit-frame-pointer" \
+        -DCMAKE_C_FLAGS_DEBUG="-g3 -O0 -fno-omit-frame-pointer" \
         -DINDICATOR_PLATFORM_DISPMANX=ON \
         -DINDICATOR_BUILD_TESTS=OFF \
         -DINDICATOR_BUILD_INGEST=OFF

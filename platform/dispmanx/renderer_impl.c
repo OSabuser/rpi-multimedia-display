@@ -52,18 +52,18 @@ static const slot_props_t SLOT_PROPS[SPRITE_SLOT_COUNT] = {
  * Размер DispmanX-ресурса DIGIT-слота (px).
  *
  * Определяется размером самого широкого глифа шрифта CalSans260.
- * Самый широкий двухсимвольный глиф — «П0» (348 px по ширине).
- * DIGIT_SLOT_W = 400 — с запасом для центрирования.
- * DIGIT_SLOT_H = 191 — высота глифа CalSans260.
+ * Самый широкий двухсимвольный глиф — «П0» (235 + 200 = 435 px).
+ * DIGIT_SLOT_W = 450 — с запасом ~15 px для центрирования.
+ * DIGIT_SLOT_H = 239 — высота глифов CalSans260 325pt.
  *
  * При смене шрифта: обновить DIGIT_SLOT_W/H по новому глифу
- * и исправить _Static_assert ниже.
+ * и исправить digit_slot_validate_font ниже.
  * digit_slot_validate_font() в renderer_create() проверит соответствие при старте.
  */
 enum
 {
-    DIGIT_SLOT_W = 400,
-    DIGIT_SLOT_H = 191,
+    DIGIT_SLOT_W = 450,
+    DIGIT_SLOT_H = 239,
     /* VideoCore требует выравнивания pitch и высоты на 16.
 +     * ARGB8888 = 4 байт/пиксель.                            */
     DIGIT_ALIGN     = 16,
@@ -433,12 +433,14 @@ void renderer_show_digit(renderer_t *r, char_code_t left, char_code_t right)
     (void) memset(r->digit_pixels, 0, (size_t) DIGIT_BUF_BYTES);
 
     uint32_t str_w = font_measure_string(&CalSans260, str);
+    //TODO: изменить алгоритм выравнивания
     uint32_t x_off =
         (str_w < (uint32_t) DIGIT_SLOT_W) ? ((uint32_t) DIGIT_SLOT_W - str_w) / 2U : 0U;
     font_render_target_t target = {
         .pixels = r->digit_pixels,
         .width  = DIGIT_SLOT_W,
         .height = DIGIT_SLOT_H,
+        .stride = DIGIT_PITCH_PX,
     };
     (void) font_render_string(&CalSans260, str, x_off, 0U, &target);
 

@@ -36,6 +36,7 @@ typedef struct font_render_target_s
     uint32_t *pixels; /**< ARGB8888-пиксели; size = width * height элементов */
     uint32_t width;  /**< ширина буфера в пикселях                           */
     uint32_t height; /**< высота буфера в пикселях                           */
+    uint32_t stride; /**< шаг строки в пикселях (>= width, выровнен 16) */
 } font_render_target_t;
 
 /* ─── API ────────────────────────────────────────────────────────────────── */

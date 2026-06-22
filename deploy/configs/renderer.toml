@@ -8,7 +8,7 @@
 #   Z=4  WEIGHT      (load_N.png, ~427×106) — ожидает PNG от дизайнера
 #   Z=4  DIGIT_LEFT  (font renderer CalSans260) — fast_update
 #   Z=4  DIGIT_RIGHT (reserved, не используется) — см. renderer_show_digit
-#   Z=4  ARROW       (arrows/*.png, ~338×376) — fast_update, ожидает PNG
+#   Z=4  ARROW       (arrows/*.png, 179×191) — fast_update
 #   Z=5  NOTIFICATION (1080×270px)
 # Экран 1080×1920:
 #     ┌──────────────────┐ y=0
@@ -31,11 +31,11 @@ x = 0
 y = 0
 
 [slot.arrow]
-x = 875
-y = 181
+x = 900
+y = 225
 
 [slot.weight]
-x = 333
+x = 800
 y = 27
 
 [slot.notification]

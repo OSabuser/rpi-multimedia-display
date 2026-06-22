@@ -79,7 +79,7 @@ static void draw_pixel_to_target(uint16_t x, uint16_t y, uint32_t color)
         return;
     }
 
-    s_render_ctx->pixels[abs_y * s_render_ctx->width + abs_x] = color;
+    s_render_ctx->pixels[abs_y * s_render_ctx->stride + abs_x] = color;
 }
 
 /* ─── Публичный API ──────────────────────────────────────────────────────── */

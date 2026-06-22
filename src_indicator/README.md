@@ -1,232 +1,184 @@
-# src_indicator — Lift Indicator daemon
+# platform/dispmanx — DispmanX renderer + font stack
 
-Демон индикатора лифта. Получает фреймы от STM32 по UART, обновляет
-DispmanX-рендерер и воспроизводит звук.
-
-Платформа: **Raspberry Pi Zero 2W** · BCM2710A1 · 4× Cortex-A53 · Debian Buster armhf.
+Платформенная реализация рендерера для Raspberry Pi Zero 2W.
+Зависит от `bcm_host` (`/opt/vc`) — не компилируется на хосте.
+Публичный интерфейс изолирован в `src_indicator/renderer/renderer.h`.
 
 ---
 
-## Структура модуля
+## Структура блока
 
-```bash
-src_indicator/
-├── main.c           — composition root: инициализация, poll loop, cleanup
-├── app_handlers.c   — обработчики событий: UART, media IPC, watchdog, уведомления
-├── app_render.c     — обновление DispmanX-слотов по событиям лифта и диспетчера
-├── app_private.h    — общие типы app_t / stats_t и forward-объявления для трёх TU
-│
-├── audio/           — ALSA-плеер (aplay, pthread)
-├── config/          — парсер nku_scheme.toml / video.toml / renderer.toml
-├── domain/          — бизнес-логика: parser, floor, state, sound_map
-├── media/           — IPC с media-ingest (FIFO)
-├── player/          — omxplayer wrapper
-├── protocol/        — типы MU-протокола
-├── renderer/        — публичный API DispmanX-рендерера (renderer.h)
-└── transport/       — UART (termios)
+```
+platform/dispmanx/
+├── renderer_impl.c     — реализация renderer_t: слоты, ресурсы, fast_update
+├── font_renderer.c/.h  — адаптер fonts.c → ARGB8888 буфер (stride-aware)
+└── fonts/
+    ├── fonts.h/.c      — RLE-декомпрессор, draw_string(), callback-архитектура
+    ├── CalSans260.h     — extern const tFont CalSans260
+    └── CalSans260.c    — данные глифов 325pt (сгенерированы lcd-image-converter)
 ```
 
-### Декомпозиция main.c → три TU
-
-| Файл | Содержимое |
-|---|---|
-| `main.c` | `main()`, setup-функции (`signalfd`, `timerfd`, `open_uart`, `read_setup_status`), poll loop, cleanup |
-| `app_handlers.c` | `on_uart_frame()`, `on_media_status()`, `on_watchdog_tick()`, `maybe_clear_mcu_notification()`, `notif_arm()`, `notif_disarm()` |
-| `app_render.c` | `renderer_apply_elevator()`, `renderer_apply_mode()`, `renderer_apply_dispatch()`, `mode_to_rel_path()` |
-| `app_private.h` | `app_t`, `stats_t`, `setup_status_t`, `fd_index_t`, `extern g_s_stats`, forward-объявления |
+> **Примечание по именованию:** файл `CalSans260.c` содержит шрифт Cal Sans **325pt**
+> (перегенерирован из 260pt). Имя файла сохранено для совместимости с CMakeLists.
 
 ---
 
-## Архитектура event loop
+## Z-слои и геометрия слотов
 
-Один поток, один `poll()`, пять файловых дескрипторов.
+```mermaid
+block-beta
+  columns 1
+  N["Z=5  SPRITE_NOTIFICATION   1080×270  y=1650"]
+  A["Z=4  SPRITE_ARROW          188×209"]
+  DL["Z=4  SPRITE_DIGIT_LEFT    450×239  (font renderer)"]
+  W["Z=4  SPRITE_WEIGHT         ~  (ожидает PNG)"]
+  M["Z=3  SPRITE_MODE           1080×1920"]
+  B["Z=2  SPRITE_BACKGROUND     1080×1920  (BACK.png)"]
+  V["Z=1  omxplayer             1080×1920  (фоновое видео)"]
+```
+
+| Слот | Z | Тип обновления | Размер |
+|---|---|---|---|
+| `SPRITE_BACKGROUND` | 2 | slow (destroy+create) | 1080×1920 |
+| `SPRITE_MODE` | 3 | slow | 1080×1920 |
+| `SPRITE_WEIGHT` | 4 | slow | ~ |
+| `SPRITE_DIGIT_LEFT` | 4 | **fast** (`changeSourceImageLayer`) | 450×239 |
+| `SPRITE_DIGIT_RIGHT` | 4 | reserved до F6 | — |
+| `SPRITE_ARROW` | 4 | **fast** | 188×209 |
+| `SPRITE_NOTIFICATION` | 5 | slow | 1080×270 |
+
+---
+
+## DispmanX lifecycle
 
 ```mermaid
 flowchart TD
-    POLL["poll(fds, 5, -1)\nблокирует до любого события"]
+    A["renderer_create()\nbcm_host_init()\nvc_dispmanx_display_open(0)"]
+    B["renderer_show_png(slot, path)\nили renderer_show_digit()"]
 
-    POLL -->|POLLIN| FD_UART["FD_UART\nuart_fd"]
-    POLL -->|POLLIN| FD_SIG["FD_SIG\nsig_fd"]
-    POLL -->|POLLIN| FD_TIMER["FD_TIMER\ntimer_fd"]
-    POLL -->|POLLIN| FD_FIFO["FD_FIFO\nmedia fifo"]
-    POLL -->|POLLIN| FD_NOTIF["FD_NOTIF\nnotif timerfd"]
+    B --> C{slot initialized?}
+    C -->|нет — первый вызов| D["loadPng / setup_digit_image()\ncreateResourceImageLayer()\naddElementImageLayer()"]
+    C -->|да + fast slot| E["changeSourceImageLayer()\n⚡ без мигания"]
+    C -->|да + slow slot| F["destroyImageLayer()\n→ повторить первый вызов"]
 
-    FD_UART --> UPR["uart_process_rx()"]
-    UPR --> OUF["on_uart_frame()"]
-    OUF --> PPP["protocol_parse_payload()\nfloor_decode()\nstate_apply_frame()"]
-    PPP --> RAE["renderer_apply_elevator()"]
-    PPP --> AUD["audio_player_play()"]
+    D --> G["vc_dispmanx_update_submit_sync()"]
+    E --> G
+    F --> G
 
-    FD_SIG --> HS["handle_signal()"]
-    HS -->|SIGTERM/SIGINT| STOP["running = 0"]
-    HS -->|SIGCHLD| VCR["video_player_check_and_restart()"]
+    H["renderer_keepalive()\nпустой update каждые 30 с\n(P-28 митигация)"]
+    H --> G
 
-    FD_TIMER --> OWT["on_watchdog_tick()\nлог статистики + keepalive"]
-
-    FD_FIFO --> OMS["on_media_status()\nSPRITE_NOTIFICATION"]
-
-    FD_NOTIF --> HIDE["renderer_hide(NOTIFICATION)\nавтоскрытие через N сек"]
+    I["renderer_destroy()\ndestroyImageLayer × N\nvc_dispmanx_display_close()\nbcm_host_deinit()"]
 ```
 
-### Почему один поток
+### Fast vs slow update
 
-Pi Zero 2W имеет 4 ядра, но создавать потоки ради event loop нет смысла:
+**Fast слоты** (`DIGIT_LEFT`, `ARROW`): ресурс фиксированного размера создаётся
+один раз, пиксели перезаписываются в тот же буфер через `changeSourceImageLayer`.
+Не мигают, не аллоцируют GPU-память повторно.
 
-- Весь горячий путь (UART → парсер → рендерер) завершается за единицы мс. Блокирующих операций нет.
-- Отсутствие shared state = отсутствие мьютексов в критическом пути = предсказуемая latency.
-- Исключение: `audio_player` работает в отдельном pthread, потому что `waitpid(aplay_pid)` должен ждать завершения звука не блокируя loop.
+**Slow слоты** (`BACKGROUND`, `MODE`, `WEIGHT`, `NOTIFICATION`): каждое обновление —
+`destroy` + `create`. Размер PNG может меняться между вызовами. Допускают
+кратковременное мигание (невидимо на практике, т.к. вызываются при смене режима).
 
 ---
 
-## Порядок инициализации
+## Font stack
 
 ```mermaid
 flowchart LR
-    A["1. config_load()\nnku_scheme + video + renderer + uart toml"]
-    B["2. state_init()"]
-    C["3. signalfd\n(до дочерних процессов)"]
-    D["4. timerfd\n(watchdog)"]
-    E["5. media_ipc_open()\nFIFO от media-ingest"]
-    F["6. notif timerfd\n(автоскрытие уведомлений)"]
-    G["7. video_player_open()\nomxplayer subprocess"]
-    H["8. renderer_create()\nDispmanX display"]
-    I["9. audio_player_open()\npthread"]
-    J["10. uart_open()\nпоследним"]
+    RS["renderer_show_digit(left, right)"]
+    CS["compose_digit_str()\nchar_code_t → UTF-8"]
+    MS["font_measure_string()\nget_string_width()"]
+    MEM["memset(digit_pixels, 0)"]
+    FR["font_render_string()\ndraw_string() + callback"]
+    CB["draw_pixel_to_target(x, y, color)\npixels[y × stride + x]"]
+    DMX["setup_digit_image()\nvc_dispmanx_resource_write_data()"]
 
-    A --> B --> C --> D --> E --> F --> G --> H --> I --> J
+    RS --> CS --> MS --> MEM --> FR --> CB --> DMX
 ```
 
-UART открывается последним намеренно: `on_uart_frame()` вызывается синхронно
-из `uart_process_rx()` — к этому моменту renderer и audio должны быть готовы,
-иначе NULL-дереференс.
+### Шрифт CalSans260 (325pt)
 
----
-
-## Файловые дескрипторы poll loop
-
-| Индекс | fd | Событие | Обработчик |
-|---|---|---|---|
-| `FD_UART` | `/dev/serial0` | POLLIN | `uart_process_rx()` → `on_uart_frame()` |
-| `FD_SIG` | signalfd | POLLIN | `handle_signal()` |
-| `FD_TIMER` | timerfd 30 с | POLLIN | `on_watchdog_tick()` |
-| `FD_FIFO` | `/run/indicator/media_status.fifo` | POLLIN / POLLHUP | `on_media_status()` / переоткрытие |
-| `FD_NOTIF` | timerfd one-shot | POLLIN | `renderer_hide(SPRITE_NOTIFICATION)` |
-
-`FD_FIFO = -1` и `FD_NOTIF = -1` при ошибке открытия — `poll()` игнорирует
-отрицательные fd, функциональность деградирует без падения.
-
----
-
-## signalfd: почему не `signal()` / `sigaction()`
-
-Традиционный обработчик вызывается асинхронно и ограничен async-signal-safe
-функциями (`write()`, `_exit()`, ~30 штук). `syslog()`, `malloc()`,
-`pthread_mutex_lock()` — небезопасны внутри обработчика.
-
-С signalfd сигнал — это просто POLLIN на fd:
-
-```c
-/* Заблокировать стандартную доставку */
-sigprocmask(SIG_BLOCK, &mask, NULL);
-
-/* fd, из которого сигнал читается как структура */
-sig_fd = signalfd(-1, &mask, SFD_NONBLOCK | SFD_CLOEXEC);
-
-/* В poll loop — обычный read, никаких ограничений */
-read(sig_fd, &si, sizeof(si));
-syslog(LOG_NOTICE, "signal %u", si.ssi_signo); /* безопасно */
-```
-
-**SIGCHLD** через signalfd: omxplayer завершается → ядро посылает SIGCHLD →
-POLLIN на `FD_SIG` → `video_player_check_and_restart()` без ограничений.
-
----
-
-## timerfd: watchdog tick и P-28 митигация
-
-```c
-timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
-timerfd_settime(fd, 0, &ts, NULL); /* период = 30 с */
-```
-
-`CLOCK_MONOTONIC` — не прыгает при NTP-синхронизации и `hwclock`.
-
-При срабатывании: читаем `uint64_t` (число пропущенных тиков, обычно 1),
-вызываем `on_watchdog_tick()`:
-
-1. Логируем статистику фреймов и состояние omxplayer — видно в `journalctl` при диагностике в поле.
-2. `renderer_keepalive()` — пустая DispmanX-транзакция. Митигирует **P-28**: VideoCore IV
-   переходит в dormant при длительном отсутствии активности и останавливает видео.
-
----
-
-## Уведомления: двухуровневый timerfd
-
-```mermaid
-sequenceDiagram
-    participant MI as media-ingest
-    participant FIFO as FD_FIFO
-    participant Loop as poll loop
-    participant R as renderer
-    participant NT as FD_NOTIF (timerfd)
-
-    MI->>FIFO: write(MEDIA_DONE)
-    FIFO->>Loop: POLLIN
-    Loop->>R: renderer_show_png(NOTIFICATION, notif_success.png)
-    Loop->>NT: timerfd_settime(delay=4s)
-
-    Note over NT: 4 секунды...
-
-    NT->>Loop: POLLIN
-    Loop->>R: renderer_hide(NOTIFICATION)
-```
-
-`FD_NOTIF` — one-shot timerfd: взводится при каждом новом уведомлении,
-сбрасывается при `MEDIA_CLEAR`. Автоскрытие работает без sleep и без
-дополнительного потока.
-
----
-
-## Зачем `#define _GNU_SOURCE`
-
-| Символ | Заголовок | Почему |
+| Глиф | Ширина | Высота |
 |---|---|---|
-| `signalfd()`, `SFD_*` | `<sys/signalfd.h>` | Linux-specific |
-| `timerfd_create()`, `TFD_*` | `<sys/timerfd.h>` | Linux-specific |
-| `CLOCK_MONOTONIC` | `<time.h>` | POSIX, но glibc скрывает без `_GNU_SOURCE` |
-| `sigemptyset`, `sigprocmask` | `<signal.h>` | POSIX.1-2001, clangd не видит без флага |
+| `0` | 200 px | 239 px |
+| `1` | 95 px | 239 px |
+| `2` | 179 px | 239 px |
+| `3` | 170 px | 239 px |
+| `4` | 186 px | 239 px |
+| `5` | 172 px | 239 px |
+| `6` | 178 px | 239 px |
+| `7` | 168 px | 239 px |
+| `8` | 173 px | 239 px |
+| `9` | 178 px | 239 px |
+| `П` | **235 px** | 239 px |
+| `-` | 106 px | 239 px |
 
-`#define _GNU_SOURCE` — **до любых `#include`**. При `-std=gnu11` компилятор
-определяет его неявно, но clangd читает файл без флагов компилятора
-и подчёркивает символы красным без явного define.
+Самый широкий одиночный глиф: **П (235 px)**.
+Самая широкая двухсимвольная строка: **«П0» = 235 + 200 = 435 px**.
+`DIGIT_SLOT_W = 450` — с запасом ~15 px для центрирования.
+
+### Маппинг char_code_t → CalSans260
+
+Из 38 кодов `char_code_t` глифы есть у 12:
+
+| Группа | Коды | Глифы |
+|---|---|---|
+| Цифры | `CHAR_0`–`CHAR_9` | ✅ |
+| Буква | `CHAR_PI_CYR` (17) | ✅ `П` |
+| Знак | `CHAR_MINUS` (22) | ✅ `-` |
+| Остальные 25 | — | пропускаются |
+| `CHAR_BLANK` (16) | — | оба BLANK → слот скрывается |
 
 ---
 
-## Взаимодействие с systemd
+## Stride/pitch — критически важно
 
-```mermaid
-flowchart LR
-    SD["systemd\nRestart=always\nRestartSec=2"]
-    IND["/home/pi/indicator/indicator"]
-    JRN["journald\nLOG_DAEMON"]
+VideoCore IV требует выравнивания строк буфера на **16 пикселей**.
+`DIGIT_SLOT_W = 450` → `DIGIT_PITCH_PX = (450 + 15) & ~15 = **464**`.
 
-    SD -->|"ExecStart"| IND
-    IND -->|"syslog()"| JRN
-    SD -->|"SIGTERM → running=0 → return 0\n(штатная остановка)"| IND
+Запись пикселей в коллбэке **обязана** использовать `stride`, а не `width`:
+
+```c
+/* ПРАВИЛЬНО */
+pixels[abs_y * stride + abs_x] = color;
+
+/* НЕПРАВИЛЬНО — артефакты на каждой строке глифа */
+pixels[abs_y * width + abs_x] = color;
 ```
 
-| Уровень syslog | Когда |
-|---|---|
-| `LOG_CRIT` | Ошибка запуска, невозможно продолжить |
-| `LOG_ERR` | Ошибка устройства (UART, DispmanX) |
-| `LOG_WARNING` | Ошибка разбора фрейма, нештатная ситуация |
-| `LOG_NOTICE` | Старт, стоп, смена режима, watchdog tick |
-| `LOG_INFO` | Каждый фрейм (нормальная работа), конфиг при старте |
-| `LOG_DEBUG` | SIGCHLD, неизвестные opcode, fast-update детали |
+При `width=450` и `stride=464` каждая следующая строка глифа записывается
+со сдвигом −14 пикселей относительно того что VideoCore ожидает прочитать.
+Результат — скошенный/смещённый текст с мусором по краям.
 
-```bash
-journalctl -u indicator -f                    # tail в реальном времени
-journalctl -u indicator -n 100                # последние 100 строк
-journalctl -u indicator --since "10 min ago"  # диагностика в поле
-journalctl -u indicator -f | grep watchdog    # только watchdog тики
+`font_render_target_t` содержит явное поле `stride` именно по этой причине:
+
+```c
+font_render_target_t target = {
+    .pixels = r->digit_pixels,
+    .width  = DIGIT_SLOT_W,
+    .height = DIGIT_SLOT_H,
+    .stride = DIGIT_PITCH_PX,   /* ← обязательно, не width */
+};
 ```
+
+Аналогично в `setup_digit_image()`:
+
+```c
+p_il->image.pitch         = (int32_t)(DIGIT_PITCH_PX * DIGIT_BYTES_PP);
+p_il->image.alignedHeight = (int32_t) DIGIT_ALIGNED_H;
+```
+
+---
+
+## Валидация при старте
+
+`digit_slot_validate_font()` вызывается в `renderer_create()` до открытия display.
+Проверяет что каждый глиф CalSans260 влезает в `DIGIT_SLOT_W × DIGIT_SLOT_H`.
+При нарушении — `LOG_CRIT` и `renderer_create()` возвращает NULL.
+
+**При смене шрифта обновить:**
+1. `DIGIT_SLOT_W` / `DIGIT_SLOT_H` в `renderer_impl.c` (по самому широкому глифу + запас)
+2. Комментарии в `renderer.h` (`renderer_show_digit`)
+3. Таблицу глифов в этом README

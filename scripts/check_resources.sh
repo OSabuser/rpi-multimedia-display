@@ -62,6 +62,45 @@ check_png() {
     ok "$label"
 }
 
+check_png_size() {
+    local path="$1"
+    local label="$2"
+    local exp_w="$3"
+    local exp_h="$4"
+    CHECKED=$((CHECKED + 1))
+
+    if [[ ! -f "$path" ]]; then
+        fail "MISSING: $label → $path"
+        return
+    fi
+
+    local size
+    size=$(stat -c%s "$path" 2>/dev/null || stat -f%z "$path")
+    if [[ "$size" -eq 0 ]]; then
+        fail "EMPTY:   $label → $path"
+        return
+    fi
+
+    local sig
+    sig=$(xxd -p -l 8 "$path" 2>/dev/null || hexdump -e '8/1 "%02x"' -n 8 "$path" 2>/dev/null || echo "")
+    if [[ "$sig" != "89504e470d0a1a0a" ]]; then
+        fail "INVALID PNG: $label → $path (sig: $sig)"
+        return
+    fi
+
+    # PNG IHDR: ширина в байтах 16–19, высота в байтах 20–23 (big-endian uint32)
+    local w h
+    w=$(python3 -c "import struct,sys; d=open('$path','rb').read(24); print(struct.unpack('>I',d[16:20])[0])" 2>/dev/null || echo "0")
+    h=$(python3 -c "import struct,sys; d=open('$path','rb').read(24); print(struct.unpack('>I',d[20:24])[0])" 2>/dev/null || echo "0")
+
+    if [[ "$w" -ne "$exp_w" || "$h" -ne "$exp_h" ]]; then
+        fail "WRONG SIZE: $label → expected ${exp_w}×${exp_h}, got ${w}×${h}"
+        return
+    fi
+
+    ok "$label (${w}×${h})"
+}
+
 check_wav() {
     local path="$1"
     local label="$2"
@@ -113,8 +152,8 @@ echo ""
 # ─── 2. Arrows ───────────────────────────────────────────────────────────────
 
 echo "── Arrows ──────────────────────────────────────────────"
-check_png "$RESOURCES_DIR/arrows/up.png"   "arrows/up.png"
-check_png "$RESOURCES_DIR/arrows/down.png" "arrows/down.png"
+check_png_size "$RESOURCES_DIR/arrows/up.png"   "arrows/up.png"   172 191
+check_png_size "$RESOURCES_DIR/arrows/down.png" "arrows/down.png" 172 191
 echo ""
 
 # ─── 3. Weights (load_0 – load_15) ───────────────────────────────────────────
@@ -127,12 +166,12 @@ for i in $(seq 0 15); do
     if [[ ! -f "$path" ]]; then
         fail "MISSING: weights/load_${i}.png"
         MISSING_WEIGHTS="$MISSING_WEIGHTS $i"
-    elif [[ $(stat -c%s "$path" 2>/dev/null || stat -f%z "$path") -eq 0 ]]; then
-        fail "EMPTY:   weights/load_${i}.png"
     else
-        sig=$(xxd -p -l 8 "$path" 2>/dev/null || echo "")
-        if [[ "$sig" != "89504e470d0a1a0a" ]]; then
-            fail "INVALID PNG: weights/load_${i}.png"
+        w=$(python3 -c "import struct; d=open('$path','rb').read(24); print(struct.unpack('>I',d[16:20])[0])" 2>/dev/null || echo "0")
+        h=$(python3 -c "import struct; d=open('$path','rb').read(24); print(struct.unpack('>I',d[20:24])[0])" 2>/dev/null || echo "0")
+        if [[ "$w" -ne 237 || "$h" -ne 59 ]]; then
+            fail "WRONG SIZE: weights/load_${i}.png → expected 237×59, got ${w}×${h}"
+            MISSING_WEIGHTS="$MISSING_WEIGHTS $i"
         fi
     fi
 done
