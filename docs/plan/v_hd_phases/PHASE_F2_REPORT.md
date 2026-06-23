@@ -150,7 +150,7 @@ vcdbg reloc:
 
 ## Состояние сборки
 
-```
+```bash
 just build::pi      ✅  indicator + media_ingest + uart_rx_dump + notif_test
 just build::pi-debug ✅  debug-бинарь с -g3 -O0
 just build::test    ✅  host unit-тесты (не затронуты)
