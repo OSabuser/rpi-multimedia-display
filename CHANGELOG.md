@@ -5,6 +5,47 @@
 
 ---
 
+## [Unreleased] — ветка `dev-pi2w` (Lift Indicator HD, Pi Zero 2W)
+
+Целевое устройство: Raspberry Pi Zero 2W · Cortex-A53 (ARMv8-A 32-bit) · Debian Buster Lite armhf · 1080×1920.
+Фазы F0–F4 закрыты (см. `docs/plan/v_hd_phases/`, `docs/plan/MASTER_PLAN_HD.md`), F5 в работе.
+
+### Added
+
+- Toolchain `arm-zig-cc-a53` (`-mcpu=cortex_a53`, hard-float) и `cmake/Toolchain-RPiZero2W.cmake` (F0)
+- FullHD renderer 1080×1920; цифры этажа через font renderer CalSans260 вместо PNG `chars/` (F2)
+- `scripts/prepare_base_image.sh`: 3 раздела на чистом Buster до первой загрузки
+  (p2 8G, p3 4G `LABEL=data`), `cmdline.txt`/`config.txt` из `deploy/boot/`, проверка `WPA_CONF`
+- `scripts/cleanup_image.sh`: снимок эталонной платы → factory image (проверки fstab и first_boot,
+  сброс hostname, SSH host keys, machine-id, WiFi, логов; zerofree; обрезка хвоста после p3)
+- `scripts/inspect_image.sh`, `scripts/shrink_image.sh` (перенесены из `dev-pi`)
+- `just pi::` группа `image`: `prepare-image`, `backup-image` (только съёмный диск, с подтверждением),
+  `cleanup-image`, `inspect-image`, `shrink-image`; рецепт `deploy-boot` (config.txt → /boot)
+- `setup_pi.sh`: `/data` на p3 (`LABEL=data` до bind-монтов), WiFi на `/data` + bind-mount,
+  `wpa_supplicant` enabled (P-38), `raspberrypi-net-mods` masked, `first_boot_done` на эталонной плате,
+  локаль ru_RU.UTF-8 + консольный шрифт CyrSlav Terminus 14x28, overlayfs OFF
+- `first_boot.sh`: hostname `indicator-hd-<serial>`, WiFi seed `/boot/wpa_supplicant.conf` → `/data`
+
+### Fixed
+
+- P-36: контрол softvol `PCM` отсутствовал до первого воспроизведения — `alsactl store` в `setup_pi.sh`,
+  восстановление `alsa-restore.service`
+- `deploy/boot/config.txt` без финального `\n`: `enable_overlayfs` склеил бы `initramfs …`
+  с `dtparam=watchdog=on` (не стартовали бы watchdog и overlayfs)
+- `cmdline.txt` штатного Buster: `console=serial0,115200` слал лог ядра в UART STM32 (убран при prepare)
+- `setup_pi.sh`: apt неинтерактивен (скрипт идёт через stdin); ожидание NTP и проверка кандидатов пакетов;
+  идемпотентные bind-монты
+- `shrink_image.sh`: зависание на подтверждении `parted resizepart`
+- `smoke_test.sh`, `cleanup_image.sh`: ложные провалы `cmd | grep -q` под `pipefail` (SIGPIPE)
+
+### Changed
+
+- `PI_HOST` по умолчанию — `raspberrypi.local` (свежая плата); production — `indicator-hd-<serial>.local`
+- Документация приведена к Zero 2W: `DEV_ARCH.md`, `RPI_SYSROOT.md`, `SYSTEMD_FLOW.md`, `FLASHING_GUIDE.md`,
+  README модулей; дубли мастер-планов удалены, план — `docs/plan/MASTER_PLAN_HD.md`
+
+---
+
 ## [1.0.0] — 2026-06-10
 
 Первый стабильный релиз. Система полностью функциональна и прошла

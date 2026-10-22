@@ -25,8 +25,9 @@
 | ОС | Raspbian Buster Lite 2023-05-03 (Debian 10, armhf) |
 | Дисплей | HDMI, 1080×1920 (портрет, `display_hdmi_rotate=3`) |
 | Аудио | hifiberry-dac (I2S, несущая плата) |
-| MCU | STM32 на несущей плате, UART `/dev/serial0`, 115200 8N1 |
-| Накопитель | SD-карта ≥16 GB (3 раздела: `/boot` · rootfs · `/data`) |
+| MCU | STM32 на несущей плате, UART `/dev/serial0` → `ttyAMA0`, 115200 8N1 |
+| Сеть | WiFi **только 2.4 GHz**, WPA2 (5 GHz / WPA3 не поддерживаются) |
+| Накопитель | SD-карта ≥16 GB (3 раздела: `/boot` 256M · rootfs 8G · `/data` 4G `LABEL=data`) |
 
 ---
 
@@ -34,14 +35,18 @@
 
 ### Прошивка нового устройства
 
+> ⚠️ Factory image для 2W (`indicator-hd-base-*.img.gz`) собирается в фазе F5 (конвейер готов, снимок эталонной платы — после её проверки). `indicator-base-v1.0.0*.img.gz` — образ для Pi Zero W (ARMv6, 600×1024), на 2W не использовать. Пошагово для производства — [`FLASHING_GUIDE.md`](docs/FLASHING_GUIDE.md).
+
 ```bash
 # 1. Прошить factory image через balenaEtcher
 indicator-hd-base-YYYYMMDD.img.gz → SD-карта
 
-# 2. Положить WiFi credentials (опционально):
+# 2. Положить WiFi credentials (опционально; ssid/psk — в прямых кавычках, сеть 2.4 GHz):
 cat > /Volumes/boot/wpa_supplicant.conf << 'EOF'
-country=RU
 ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev
+update_config=1
+country=RU
+
 network={
     ssid="YOUR_SSID"
     psk="YOUR_PASSWORD"
@@ -49,7 +54,7 @@ network={
 EOF
 
 # 3. Вставить SD-карту в Pi, включить питание
-#    Старт 1: first_boot.sh → hostname + SSH + WiFi + overlayfs ON + reboot
+#    Старт 1: first_boot.sh → hostname + SSH keys + machine-id + WiFi seed → /data + overlayfs ON + reboot
 #    Старт 2: устройство готово к работе (~2 мин от включения)
 ```
 
@@ -59,14 +64,14 @@ EOF
 
 ```bash
 just pi::update-start    # overlayfs OFF → reboot (rootfs writable)
-just pi::deploy          # rsync бинари + конфиги
+just pi::deploy          # rsync бинари + конфиги (config.txt — отдельно: just pi::deploy-boot)
 just pi::restart         # проверить что работает
 just pi::update-finish   # overlayfs ON → reboot (rootfs protected)
 ```
 
 ### Замена фонового видео
 
-Вставить USB-носитель с `.mp4` файлами (H.264 MP4, уровень ≤ 4.1) — устройство обработает и заменит видео автоматически. Подробности: [`MEDIA_GUIDE.md`](MEDIA_GUIDE.md).
+Вставить USB-носитель с `.mp4` файлами (H.264 MP4, уровень ≤ 4.1) — устройство обработает и заменит видео автоматически. Подробности: [`MEDIA_GUIDE.md`](docs/MEDIA_GUIDE.md).
 
 ---
 
@@ -122,10 +127,10 @@ graph LR
 | 1 | omxplayer | фоновое видео | 1080×1920 |
 | 2 | `SPRITE_BACKGROUND` | `BACK.png` | 1080×1920 |
 | 3 | `SPRITE_MODE` | иконка режима | 1080×1920 |
-| 4 | `SPRITE_WEIGHT` | грузоподъёмность | ~ |
-| 4 | `SPRITE_DIGIT_LEFT` | цифра этажа (CalSans260) | 400×191 |
+| 4 | `SPRITE_WEIGHT` | грузоподъёмность | 237×59 |
+| 4 | `SPRITE_DIGIT_LEFT` | цифра этажа (CalSans260) | 450×239 |
 | 4 | `SPRITE_DIGIT_RIGHT` | резерв (F6) | — |
-| 4 | `SPRITE_ARROW` | стрелка up/down | 188×209 |
+| 4 | `SPRITE_ARROW` | стрелка up/down | 172×191 |
 | 5 | `SPRITE_NOTIFICATION` | уведомление | 1080×270 |
 
 ---
@@ -151,10 +156,16 @@ just pi::bootstrap
 # Открыть в VSCode → "Reopen in Container"
 # Devcontainer: Ubuntu 22.04 + LLVM 17 + zig 0.13.0 + Pi sysroot
 
-# Первичная настройка Pi (пакеты, ALSA, /data layout, fstab)
+# Новая плата: подготовить SD (3 раздела + /boot), прошить, загрузить
+just pi::prepare-image wpa_supplicant.conf   # .env: PI_HOST=raspberrypi.local
+just pi::setup-ssh
+# Первичная настройка Pi (пакеты, ALSA, /data на p3, WiFi на /data, локаль)
 just pi::setup-pi
+just pi::deploy-full
 just pi::enable-services
 ```
+
+Сборка golden image целиком (снимок → cleanup → проверка) — в [`DEV_ARCH.md`](docs/DEV_ARCH.md#golden-image-factory-image).
 
 ### Сборка и деплой
 
@@ -217,7 +228,7 @@ just pi::check-resources    # валидация всех ресурсов на 
 │   └── config_toolset/     ← pi_nku_sync, pi_nku_menu (Rust, submodule)
 ├── *.toml                  ← nku_scheme, renderer, video, pi_scheme, menu_style
 ├── *.service               ← systemd units
-└── MASTER_PLAN__HD.md      ← архитектурные решения, roadmap фаз F0–F6
+└── docs/                   ← MASTER_PLAN_HD, отчёты фаз, гайды, чеклисты испытаний
 ```
 
 ---
@@ -226,12 +237,19 @@ just pi::check-resources    # валидация всех ресурсов на 
 
 | Документ | Описание |
 |---|---|
-| [`MASTER_PLAN__HD.md`](MASTER_PLAN__HD.md) | Архитектурные решения, Z-слои, roadmap фаз F0–F6 |
-| [`MEDIA_GUIDE.md`](MEDIA_GUIDE.md) | Замена фонового видео через USB, требования к формату |
-| [`SYSTEMD_FLOW.md`](SYSTEMD_FLOW.md) | Граф systemd-юнитов, порядок старта, overlayfs |
-| [`MEDIA_INGEST_FLOW.md`](MEDIA_INGEST_FLOW.md) | Конечный автомат media-ingest, FIFO протокол |
-| `src_indicator/README.md` | Event loop, poll fd, инициализация, watchdog, signalfd |
-| `PHASE_F0_REPORT.md` … `PHASE_F2_SESSION_REPORT.md` | Отчёты фаз bring-up |
+| [`MASTER_PLAN_HD.md`](docs/plan/MASTER_PLAN_HD.md) | Архитектурные решения, Z-слои, roadmap фаз F0–F6 |
+| [`MEDIA_GUIDE.md`](docs/MEDIA_GUIDE.md) | Замена фонового видео через USB, требования к формату |
+| [`SYSTEMD_FLOW.md`](docs/SYSTEMD_FLOW.md) | Граф systemd-юнитов, порядок старта, overlayfs |
+| [`MEDIA_INGEST_FLOW.md`](src_media_ingest/MEDIA_INGEST_FLOW.md) | Конечный автомат media-ingest, FIFO протокол |
+| [`FLASHING_GUIDE.md`](docs/FLASHING_GUIDE.md) | Прошивка SD-карты на производстве (balenaEtcher) |
+| [`DEV_ARCH.md`](docs/DEV_ARCH.md) | Рабочее окружение, toolchain, деплой, golden image, типичные проблемы |
+| [`RPI_SYSROOT.md`](build-env/RPI_SYSROOT.md) | Что копируется с Pi для сборки и как подключается |
+| [`platform/README.md`](platform/README.md) | DispmanX renderer, Z-слои, font renderer |
+| [`src_indicator/README.md`](src_indicator/README.md) | Event loop, poll fd, инициализация, watchdog, signalfd |
+| [`src_indicator/audio/README.md`](src_indicator/audio/README.md) | Аудио-очередь, ALSA-стек, P-36 |
+| [`tools/README.md`](tools/README.md) | `uart_rx_dump`, `notif_test` |
+| [`docs/plan/v_hd_phases/`](docs/plan/v_hd_phases/) | Отчёты фаз F0–F3 |
+| [`docs/tests/hd/`](docs/tests/hd/) | Чеклист интеграционных испытаний 2W |
 
 ---
 
@@ -245,15 +263,14 @@ gantt
     section Завершено
     F0 Toolchain + сборка      :done, f0, 2026-06-01, 2d
     F1 Bring-up устройства     :done, f1, after f0, 2d
-    F2 FullHD renderer + fonts :done, f2, after f1, 4d
+    F2 FullHD renderer + fonts :done, f2, after f1, 7d
+    F3 FullHD video + ingest   :done, f3, 2026-06-20, 4d
+    F4 Audio + испытания       :done, f4, after f3, 2d
 
     section В процессе
-    F2 PNG weights + испытания :active, f2b, 2026-06-19, 3d
+    F5 Factory image           :active, f5, 2026-10-21, 3d
 
     section Далее
-    F3 FullHD video + ingest   :f3, after f2b, 3d
-    F4 Audio + интеграция      :f4, after f3, 2d
-    F5 Deploy v2 factory image :f5, after f4, 2d
     F6 Trunk-унификация        :f6, after f5, 3d
 ```
 
@@ -261,10 +278,10 @@ gantt
 |---|---|---|
 | F0 | ✅ | Toolchain `cortex_a53`, zig wrapper, CMake, сборка |
 | F1 | ✅ | Bring-up 2W, UART, DispmanX, overlayfs |
-| F2 | 🔄 | FullHD renderer, font renderer CalSans260, layout, рефакторинг main.c |
-| F3 | ⏳ | 1080p video loop, media-ingest, температурный контроль |
-| F4 | ⏳ | Аудио-валидация, интеграционные испытания |
-| F5 | ⏳ | Factory image `indicator-hd-base-YYYYMMDD.img.gz` |
+| F2 | ✅ | FullHD renderer, font renderer CalSans260, layout, рефакторинг main.c |
+| F3 | ✅ | 1080p video loop, media-ingest, температурный контроль |
+| F4 | ✅ | Испытания на объекте; P-36 закрыт, smoke 26/26 |
+| F5 | 🔄 | Конвейер образа готов (`just pi::prepare/cleanup/inspect/shrink-image`); снимок эталонной платы — впереди |
 | F6 | ⏳ | Унификация `dev-pi` и `dev-pi2w` в один trunk |
 
 ---

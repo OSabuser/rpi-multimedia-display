@@ -6,7 +6,7 @@
 # =============================================================================
 
 BUILD_DIR := env('BUILD_DIR', justfile_directory() / '..' / 'build')
-PI_HOST := env('PI_HOST', 'indicator-01.local')
+PI_HOST := env('PI_HOST', 'raspberrypi.local')
 PI_USER := env('PI_USER', 'pi')
 PI_DIR := env('PI_DIR', '/home/pi/indicator')
 _pi := PI_USER + "@" + PI_HOST
@@ -186,8 +186,8 @@ fetch-png-sysroot:
     echo "    headers: $(ls ${DEST}/include/png.h ${DEST}/include/zlib.h)"
     echo "    libs:    $(ls ${DEST}/lib/arm-linux-gnueabihf/libpng16.so ${DEST}/lib/arm-linux-gnueabihf/libz.so)"
     echo ""
-    echo "  ℹ️  Используем динамическую линковку (.so)."
-    echo "     libpng16.a из Pi содержит ARMv7 код и несовместима с ARMv6 (Pi Zero W)."
+    echo "  ℹ️  Используем динамическую линковку (.so) — как в ветке dev-pi (P-27):"
+    echo "     на A53 ARMv7-код libpng16.a был бы легален, но схему линковки не меняем."
 
 [doc('Установить gdbserver на Pi (один раз)')]
 [group('setup')]
@@ -270,7 +270,7 @@ deploy-bin:
         "{{ _pi }}:{{ PI_DIR }}/"
     echo "  ✅  Binaries deployed"
 
-[doc('Задеплоить диагностические утилиты (uart_rx_dump + MUp-rpi0)')]
+[doc('Задеплоить диагностические утилиты (uart_rx_dump + notif_test + MUp-rpi0)')]
 [group('deploy')]
 deploy-tools:
     #!/usr/bin/env bash
@@ -355,6 +355,21 @@ deploy-splash:
     ssh "{{ _pi }}" "mkdir -p {{ PI_DIR }}/splash"
     rsync -avz "$SPLASH" "{{ _pi }}:{{ PI_DIR }}/splash/splash.jpg"
     echo "  ✅  splash deployed"
+
+[doc('Задеплоить deploy/boot/config.txt → /boot (с бэкапом; применится после reboot)')]
+[group('deploy')]
+deploy-boot:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # cmdline.txt НЕ деплоится: в нём PARTUUID конкретной карты (prepare_base_image.sh
+    # подставляет его из образа). config.txt — общий для всех устройств 2W.
+    if ssh "{{ _pi }}" "grep -qs ' / overlay ' /proc/mounts"; then
+        echo "  ❌  overlayfs активен — сначала just pi::update-start"; exit 1
+    fi
+    echo "  📤  Deploying config.txt to {{ _pi }}:/boot/..."
+    rsync -avz deploy/boot/config.txt "{{ _pi }}:/tmp/config.txt"
+    ssh "{{ _pi }}" "sudo cp /boot/config.txt /boot/config.txt.bak && sudo cp /tmp/config.txt /boot/config.txt"
+    echo "  ✅  config.txt deployed (бэкап: /boot/config.txt.bak); применится после just pi::reboot"
 
 [doc('Задеплоить фоновое видео → /data/videos/output.mp4')]
 [group('deploy')]
@@ -522,7 +537,7 @@ uart-dump-passive:
         exit 1
     }
     echo "  ⚠️   indicator.service NOT stopped — порт занят, фреймы не придут"
-    echo "  ℹ️   Используй just pi::dump для корректной диагностики"
+    echo "  ℹ️   Используй just pi::uart-dump для корректной диагностики"
     # TODO (Шаг 1): читать port/baudrate из /data/pi_nku_configs/pi_scheme.toml
     ssh -t "{{ _pi }}" "${DUMP} /dev/ttyAMA0 115200"
 
@@ -577,16 +592,89 @@ top:
 df:
     ssh "{{ _pi }}" "df -h /"
 
-[doc('Скопировать образ SD-карты Pi (указать диск: just pi::backup-image /dev/disk4)')]
-[group('util')]
+# =============================================================================
+# ГРУППА: image — golden image (MASTER_PLAN_HD §F5)
+# =============================================================================
+# Конвейер:
+#   just pi::prepare-image wpa_supplicant.conf   ← Buster → 3 раздела, /boot
+#   (прошить, загрузить)  just pi::setup-ssh / setup-pi / deploy-full / enable-services
+#   just pi::backup-image /dev/diskN             ← снять карту (macOS)
+#   just pi::cleanup-image <raw.img.gz>          ← factory image
+#   just pi::inspect-image <img.gz>              ← проверка разметки (read-only)
+#   just pi::shrink-image <img.gz> <P3_MB>       ← опционально: карты < 16 GB
+#
+# Скрипты работают в привилегированном ubuntu:22.04 (losetup + kpartx, P-36
+# Фазы 6). Рабочая копия образа — в .tmp/ репозитория (на диске хоста).
+# =============================================================================
+
+BUSTER_IMG := "build-env/2023-05-03-raspios-buster-armhf-lite.img"
+
+[private]
+_image-docker script +args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p .tmp
+    TTY=(); [ -t 0 ] && TTY=(-t)   # -t только из терминала (иначе docker падает)
+    docker run --rm -i ${TTY[@]+"${TTY[@]}"} --privileged \
+        -v "$(pwd)":/work -w /work \
+        -e TMPDIR=/work/.tmp \
+        -e WPA_CONF="${WPA_CONF:-}" \
+        ubuntu:22.04 bash -c '
+            apt-get update -qq >/dev/null &&
+            apt-get install -y -qq kpartx parted e2fsprogs dosfstools zerofree gzip >/dev/null &&
+            exec "$0" "$@"' "scripts/{{ script }}" {{ args }}
+
+[doc('Подготовить чистый Buster: 3 раздела + /boot (just pi::prepare-image wpa_supplicant.conf)')]
+[group('image')]
+prepare-image wpa="wpa_supplicant.conf" img=BUSTER_IMG:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [ -f "{{ img }}" ] || { echo "  ❌  {{ img }} не найден"; exit 1; }
+    if [ -f "{{ wpa }}" ]; then
+        export WPA_CONF="/work/{{ wpa }}"
+    else
+        echo "  ⚠️   {{ wpa }} не найден — образ без WiFi (только для Ethernet/USB)"
+    fi
+    just pi::_image-docker prepare_base_image.sh "{{ img }}"
+
+[doc('Снять SD-карту в .img.gz (macOS): just pi::backup-image /dev/disk4')]
+[group('image')]
 backup-image disk:
     #!/usr/bin/env bash
     set -euo pipefail
-    OUT="indicator-base-$(date +%Y%m%d).img.gz"
-    echo "  💾  Creating image from {{ disk }} → ${OUT}..."
-    echo "  ⚠️   Убедитесь что SD-карта вставлена и не примонтирована"
-    sudo dd if="{{ disk }}" bs=4m status=progress | gzip > "${OUT}"
+    DISK="{{ disk }}"
+    case "$DISK" in /dev/disk[0-9]*) ;; *) echo "  ❌  Ожидается /dev/diskN (см. diskutil list)"; exit 1 ;; esac
+    INFO="$(diskutil info "$DISK")" || { echo "  ❌  $DISK не найден"; exit 1; }
+    # защита от dd по системному диску: только съёмный носитель
+    if ! grep -qE "Removable Media:[[:space:]]+(Removable|Yes)" <<< "$INFO"; then
+        echo "  ❌  $DISK не съёмный носитель — отказ"; exit 1
+    fi
+    echo "$INFO" | grep -E "Device / Media Name|Disk Size|Protocol|Removable Media" | sed 's/^/    /'
+    diskutil list "$DISK" | sed 's/^/    /'
+    read -r -p "  ❓  Снимать образ с $DISK? [y/N] " ans
+    [ "$ans" = "y" ] || [ "$ans" = "Y" ] || { echo "  ⏹️   Отменено"; exit 1; }
+    OUT="indicator-hd-raw-$(date +%Y%m%d).img.gz"
+    diskutil unmountDisk "$DISK"
+    RDISK="${DISK/\/dev\/disk//dev/rdisk}"   # raw-устройство на macOS в разы быстрее
+    echo "  💾  $RDISK → ${OUT} (16 GB карта ≈ 15–30 мин)..."
+    sudo dd if="$RDISK" bs=4m status=progress | gzip > "${OUT}"
     echo "  ✅  Image saved: ${OUT}"
+    echo "  ➜   just pi::cleanup-image ${OUT}"
+
+[doc('Снимок карты → factory image indicator-hd-base-YYYYMMDD.img.gz')]
+[group('image')]
+cleanup-image raw:
+    just pi::_image-docker cleanup_image.sh "{{ raw }}"
+
+[doc('Проверить разметку и ФС образа (ничего не меняет)')]
+[group('image')]
+inspect-image img:
+    just pi::_image-docker inspect_image.sh "{{ img }}"
+
+[doc('Ужать p3 образа до P3_MB (только если нужны карты < 16 GB)')]
+[group('image')]
+shrink-image img p3_mb:
+    just pi::_image-docker shrink_image.sh "{{ img }}" "{{ p3_mb }}"
 
 # =============================================================================
 # Remote GDB через SSH-туннель

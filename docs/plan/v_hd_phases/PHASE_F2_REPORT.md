@@ -175,4 +175,4 @@ just build::test    ✅  host unit-тесты (не затронуты)
 
 ---
 
-*Передавать в следующий чат вместе с MASTER_PLAN__HD.md, PHASE_F1_REPORT.md.*
+*Передавать в следующий чат вместе с MASTER_PLAN_HD.md, PHASE_F1_REPORT.md.*

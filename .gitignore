@@ -31,3 +31,7 @@ cmake_install.cmake
 compile_commands.json
 
 __cmake_systeminformation/CMakeLists.txt
+
+# WiFi credentials для prepare_base_image.sh (WPA_CONF) и рабочая область образов
+wpa_supplicant.conf
+.tmp/

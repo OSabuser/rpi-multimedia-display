@@ -2,7 +2,7 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "🐛 Debug: indicator (Pi Zero W)",
+            "name": "🐛 Debug: indicator (Pi Zero 2W)",
             "type": "cppdbg",
             "request": "launch",
             "program": "${workspaceFolder}/build/pi-debug/indicator",

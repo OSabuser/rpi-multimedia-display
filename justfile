@@ -8,6 +8,7 @@
 #   just build::test      # host unit-тесты (devcontainer)
 #   just build::pi        # кросс-компиляция под Pi (devcontainer)
 #   just pi::deploy       # задеплоить на Pi (хост)
+#   just pi::             # группы setup / deploy / image / update / …
 # =============================================================================
 
 set shell  := ["bash", "-euo", "pipefail", "-c"]
@@ -17,7 +18,7 @@ set dotenv-load
 # === Общие переменные ===
 
 BUILD_DIR := env('BUILD_DIR', justfile_directory() / 'build')
-PI_HOST   := env('PI_HOST',   'indicator-01.local')
+PI_HOST   := env('PI_HOST',   'raspberrypi.local')   # свежая плата; production: indicator-hd-<serial>.local
 PI_USER   := env('PI_USER',   'pi')
 PI_DIR    := env('PI_DIR',    '/home/pi/indicator')
 

@@ -5,7 +5,7 @@
 # Генерирует PNG-уведомления для SPRITE_NOTIFICATION (DispmanX z=5).
 #
 # Формат: 1080×270 px, RGBA, тёмный полупрозрачный фон, белый текст.
-# Размещение на экране 1080×1920: y=1638 (нижние 282 px видимой области).
+# Размещение на экране 1080×1920: y=1650 (renderer.toml [slot.notification]).
 #
 # Зависимости: imagemagick (convert), шрифт DejaVu-Sans-Bold.
 # Запуск: bash scripts/gen_notifications.sh [OUTDIR]

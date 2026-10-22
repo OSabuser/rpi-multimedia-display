@@ -39,8 +39,8 @@
 
 ## Почему non-blocking + poll(), а не blocking read()
 
-На Pi Zero W нет аппаратного UART FIFO достаточного размера чтобы безопасно
-блокировать поток. При blocking read():
+PL011 UART (`/dev/ttyAMA0`, через `/dev/serial0` при `dtoverlay=disable-bt`) на Zero W и
+Zero 2W имеет FIFO всего 16 байт, и блокировать на нём единственный поток нельзя. При blocking read():
 
 - Один заблокированный `read()` не даст обработать сигналы (SIGTERM при
   остановке systemd) и события от других источников (timerfd, media FIFO).
@@ -80,7 +80,7 @@ read() → rx_buf → protocol_parse_frame() → коллбэк
 
 `protocol_parse_frame()` сам ищет sync1 (`0xAA`), проверяет длину, CRC,
 sync2. Поле `consumed` говорит сколько байт убрать из буфера.
-`memmove()` на 260 байт на ARMv6 @ 1 GHz ≈ 0.3 мкс — пренебрежимо мало.
+`memmove()` на 260 байт на Cortex-A53 @ 1 GHz — доли микросекунды, пренебрежимо мало.
 
 ---
 

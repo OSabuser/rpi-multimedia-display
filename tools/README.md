@@ -34,7 +34,7 @@ just pi::deploy
 ### Через just (рекомендуется)
 
 ```bash
-just pi::dump
+just pi::uart-dump
 ```
 
 Команда автоматически:
@@ -158,6 +158,11 @@ Verbose mode: showing all bytes and parse events
 
 Байты без маркера начала фрейма — мусор, сброшен.
 
+Текущая прошивка STM32 после каждого фрейма `AA … BB` дублирует состояние ASCII-строкой
+(`#STM:L1:R1:A0:S1:M0:E#\r\n`), поэтому на каждый `PARSE_OK` приходится 3–4 `ERROR_SYNC1`
+(21.10.2026: `frames OK: 9   errors: 33`). Это безвредно: в тексте нет `0xAA`, а
+`indicator` такие байты ошибками не считает (`watchdog: parse_errors=0`).
+
 ### ERROR_SYNC2
 
 ```bash
@@ -173,7 +178,7 @@ Verbose mode: showing all bytes and parse events
 **Первый запуск с новым STM32 — проверить что фреймы вообще приходят:**
 
 ```bash
-just pi::dump
+just pi::uart-dump
 # Ждём несколько секунд. Если строки PARSE_OK появляются — протокол работает.
 # Если только raw bytes без PARSE_OK — проблема CRC или byte order.
 ```
@@ -181,7 +186,7 @@ just pi::dump
 **Проверить конкретное событие (например DING при прибытии лифта):**
 
 ```bash
-just pi::dump
+just pi::uart-dump
 # Нажать кнопку вызова на пульте. Ожидаем:
 #   sound: DING  (один фрейм)
 #   sound: NONE  (следующий фрейм — сброс)
@@ -190,7 +195,7 @@ just pi::dump
 **Проверить диспетчерский сигнал:**
 
 ```bash
-just pi::dump
+just pi::uart-dump
 # Подать сигнал на оптовход CALL. Ожидаем:
 #   dispatch: CALL
 # Снять сигнал:

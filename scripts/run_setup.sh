@@ -14,14 +14,13 @@ set -uo pipefail
 
 IND="/home/pi/indicator"
 STATUS_FILE="/data/setup_status"
-BOOT_DELAY=3
 
 
 log() { logger -t indicator-setup "$*"; echo "[setup] $*"; }
 
 echo "pending" > "$STATUS_FILE"
 
-# ── 0. Boot splash (3 секунды пока MCU инициализируется) ─────────────────────
+# ── 0. Boot splash (5 секунд, пока MCU инициализируется) ─────────────────────
 if [ -f "$IND/splash/splash.jpg" ] && command -v fbi &>/dev/null; then
     sudo fbi -T 2 --noverbose "$IND/splash/splash.jpg" &
     FBI_PID=$!

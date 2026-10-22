@@ -2,11 +2,14 @@
 
 ## 1. Порядок индикации
 
-1. Задний фон - omxplayer видеопоток (output.mp4)- **layer0**
-2. Фоновая картинка (600x1024px) - BACK.png - **layer1**
-3. Иконка режима (600x1024px) - calling.png, firearm.png.. - **layer2**
-4. Иконки грузоподъемности (237x59px) - load_n.png - **layer3**
-5. Иконки символов (0-37.png, 202x346px) и стрелок (down, up.png, 188x209px) - **layer3**
+Геометрия — 1080×1920 (портрет), ветка `dev-pi2w`. Координаты слотов — `deploy/configs/renderer.toml`.
+
+1. Задний фон - omxplayer видеопоток (output.mp4, 1080×1920) - **layer0** (Z=1)
+2. Фоновая картинка (1080×1920px) - BACK.png - **layer1** (Z=2)
+3. Иконка режима (1080×1920px) - calling.png, firealarm.png.. - **layer2** (Z=3)
+4. Иконки грузоподъемности (237×59px) - weights/load_n.png - **layer3** (Z=4)
+5. Номер этажа — шрифт CalSans260 (font renderer, слот 450×239px; PNG `chars/` больше не используются) и стрелки (arrows/up.png, down.png, 172×191px) - **layer3** (Z=4)
+6. Уведомления (1080×270px) - notifications/notif_*.png - Z=5
 
 - BACK.png - полупрозрачная картинка на весь экран, накладывается на видео
 - Картинки режима (в случае если `mode != 0`) накладывается на BACK.png

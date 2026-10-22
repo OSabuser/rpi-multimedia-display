@@ -185,4 +185,4 @@ FullHD video 1080×1920: воспроизводится стабильно 22 ч
 
 ---
 
-*Передавать в следующий чат вместе с MASTER_PLAN__HD.md, PHASE_F2_REPORT.md, PHASE_F1_REPORT.md.*
+*Передавать в следующий чат вместе с MASTER_PLAN_HD.md, PHASE_F2_REPORT.md, PHASE_F1_REPORT.md.*

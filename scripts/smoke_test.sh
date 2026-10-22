@@ -111,11 +111,13 @@ else
     fail "No audio card found (aplay -l empty)"
 fi
 
-# Проверка softvol PCM контрола
-if amixer scontrols 2>/dev/null | grep -q "'PCM'"; then
+# Проверка softvol PCM контрола (P-36: создаётся alsa-restore из asound.state).
+# Вывод — в переменную: `cmd | grep -q` под pipefail даёт ложный провал (SIGPIPE)
+SCONTROLS=$(amixer scontrols 2>/dev/null || true)
+if grep -q "'PCM'" <<< "$SCONTROLS"; then
     ok "ALSA 'PCM' control present"
 else
-    fail "ALSA 'PCM' control missing — amixer scontrols пустой"
+    fail "ALSA 'PCM' control missing — нет в /var/lib/alsa/asound.state? (P-36, setup_pi.sh шаг 5)"
 fi
 
 # Проверка что i2s-silence держит dmix открытым
@@ -159,11 +161,11 @@ else
 fi
 
 # Проверка omxplayer через watchdog-строку (появляется каждые 30 с)
-if journalctl -u indicator --since "35 sec ago" --no-pager -q 2>/dev/null \
-    | grep -q "watchdog:"; then
+LOG_35S=$(journalctl -u indicator --since "35 sec ago" --no-pager -q 2>/dev/null || true)
+LOG_5M=$(journalctl -u indicator --since "5 min ago" --no-pager -q 2>/dev/null || true)
+if grep -q "watchdog:" <<< "$LOG_35S"; then
     ok "omxplayer watchdog: строка свежая (≤35 с)"
-elif journalctl -u indicator --since "5 min ago" --no-pager -q 2>/dev/null \
-    | grep -q "watchdog:"; then
+elif grep -q "watchdog:" <<< "$LOG_5M"; then
     ok "omxplayer watchdog: строка есть (последние 5 мин)"
 else
     warn "Нет watchdog-строки за 5 мин — нормально сразу после старта"

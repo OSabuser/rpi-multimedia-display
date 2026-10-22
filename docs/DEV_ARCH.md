@@ -1,9 +1,10 @@
 # Архитектура рабочего окружения
 
-> Проект: Lift Indicator
-> Устройство: Raspberry Pi Zero W Rev 1.1 (ARM1176JZF-S, ARMv6ZK, Debian Buster)
+> Проект: Lift Indicator HD (ветка `dev-pi2w`)
+> Устройство: Raspberry Pi Zero 2W (BCM2710A1, 4× Cortex-A53, ARMv8-A 32-bit, Debian Buster armhf)
 > `ssh-add --apple-use-keychain ~/.ssh/id_ed25519` — добавить ключ в агент с сохранением в Keychain
-> `ffmpeg -i input.mp4 -c:v libx264 -profile:v baseline -an output.mp4` - конвертация видео в H.264 MP4 для загрузки на USB-носитель
+> (ключ с passphrase без агента ломает все `just pi::*`: `ssh -o BatchMode=yes` → Permission denied)
+> Конвертация видео для USB — см. [`MEDIA_GUIDE.md`](MEDIA_GUIDE.md) (1080×1920, H.264 level ≤ 4.1)
 
 ---
 
@@ -34,19 +35,20 @@
 │   └── VSCode        ← IDE (Dev Containers extension)
 │
 ├── Devcontainer (Docker: indicator-build)  ← Ubuntu 22.04 + LLVM 17 + zig
-│   ├── arm-zig-cc               ← кросс-компилятор для Pi (zig cc wrapper)
+│   ├── arm-zig-cc-a53           ← кросс-компилятор для Pi Zero 2W (zig cc wrapper)
+│   ├── arm-zig-cc               ← то же для Zero W (ветка dev-pi), общий образ
 │   ├── clang-17                 ← host unit-тесты (ASan + UBSan)
 │   ├── clangd-17                ← LSP (два профиля: host / pi)
 │   ├── clang-format-17          ← форматирование по .clang-format
 │   ├── clang-tidy-17            ← статический анализ
-│   ├── gdb-multiarch            ← remote debug → Pi Zero W
+│   ├── gdb-multiarch            ← remote debug → Pi Zero 2W
 │   ├── cmake 3.28 / ninja
 │   ├── just
 │   └── /opt/vc + /usr/          ← Pi sysroot (DispmanX, bcm_host, libpng16, zlib)
 │
-└── Raspberry Pi Zero W  (indicator-01.local)
+└── Raspberry Pi Zero 2W  (raspberrypi.local → indicator-hd-<serial>.local)
     ├── SSH ◄──────── хост (деплой, логи, GDB-туннель)
-    ├── /dev/ttyAMA0  ◄── UART от STM32 (115200 8N1)
+    ├── /dev/serial0 → ttyAMA0  ◄── UART от STM32 (115200 8N1, dtoverlay=disable-bt)
     ├── gdbserver     ← remote debug (порт 3333)
     ├── DispmanX + omxplayer ← дисплей
     └── /data/        ← writable data (bind mount source)
@@ -56,27 +58,31 @@
 
 ## Почему zig cc, а не arm-linux-gnueabihf-gcc
 
-`arm-linux-gnueabihf-gcc` из Debian/Ubuntu содержит `crt1.o`, `crtbegin.o`
-скомпилированные под **ARMv7 Thumb-2**. На Pi Zero W (ARMv6) они вызывают
-segfault до запуска `main()`.
+Исторически (ветка `dev-pi`, Zero W / ARMv6): `crt1.o`, `crtbegin.o` из Debian
+`arm-linux-gnueabihf-gcc` собраны под **ARMv7 Thumb-2** и падали на ARMv6 до `main()`.
+`zig cc` компилирует собственные crt-объекты точно под указанный CPU.
 
-`zig cc -target arm-linux-gnueabihf -mcpu=arm1176jzf_s` компилирует
-собственные crt-объекты точно под указанный CPU — это тот же механизм,
-который использует Rust/cross+zig.
+На Zero 2W (Cortex-A53) ARMv7-код легален, и Debian gcc тоже работал бы. zig оставлен
+ради однородности: один Docker-образ и один механизм для обеих веток.
 
-Wrapper `/usr/local/bin/arm-zig-cc`:
+Wrapper `/usr/local/bin/arm-zig-cc-a53` (используется в `dev-pi2w`):
 
 ```sh
-exec zig cc -target arm-linux-gnueabihf -mcpu=arm1176jzf_s "$@"
+exec zig cc -target arm-linux-gnueabihf -mcpu=cortex_a53 "$@"
 ```
 
-Флаги компиляции (`cmake/Toolchain-RPiZeroW.cmake`):
+Toolchain: `cmake/Toolchain-RPiZero2W.cmake`, флаги `-mfloat-abi=hard` — **без `-marm`**
+(Thumb-2 + hard-float на A53 поддерживается полностью).
+
+Проверка результата:
 
 ```bash
--marm -mfloat-abi=hard
+readelf -A build/pi/indicator | grep -E "Tag_CPU_(name|arch)"   # "cortex-a53", v8
+readelf -h build/pi/indicator | grep Flags                       # hard-float ABI
 ```
 
-`-marm` обязателен: Thumb-1 + hard-float VFP — неподдерживаемая комбинация в GCC.
+`cmake/Toolchain-RPiZeroW.cmake` + `arm-zig-cc` (`-mcpu=arm1176jzf_s -marm`) остаются
+для ветки `dev-pi`; объединение — фаза F6.
 
 ---
 
@@ -112,10 +118,10 @@ clangd настроен через `.clangd` в корне репо с трем�
 | Путь | compile_commands | Компилятор | Назначение |
 |---|---|---|---|
 | `tests/` | `build/host` | clang-17 x86/arm64 | LSP для тестов |
-| `src/` | `build/host` | clang-17 x86/arm64 | LSP для domain-кода |
-| `platform/` | `build/pi` | arm-zig-cc | LSP для DispmanX |
+| `src_indicator/`, `src_media_ingest/` | `build/host` | clang-17 x86/arm64 | LSP для domain-кода |
+| `platform/` | `build/pi` | arm-zig-cc-a53 | LSP для DispmanX |
 
-`src/` намеренно использует host compile\_commands: domain-код платформонезависим,
+`src_indicator/` намеренно использует host compile\_commands: domain-код платформонезависим,
 host clang знает все системные заголовки идеально.
 
 `third_party/` и `platform/dispmanx/layers/` — clang-tidy отключён
@@ -160,14 +166,14 @@ just build::test-verbose  # с подробным выводом
 ### Кросс-компиляция для Pi (в devcontainer)
 
 ```bash
-just build::pi          # Release: indicator + media_ingest + uart_rx_dump
+just build::pi          # Release: indicator + media_ingest + uart_rx_dump + notif_test
 just build::pi-debug    # Debug: -g3 -O0 -fno-omit-frame-pointer
 just build::pi-dump     # Только uart_rx_dump
 just build::pi-ingest   # Только media_ingest
 ```
 
-Компилятор: arm-zig-cc → ARMv6, hard-float, ARM32 mode.
-Результат: `build/pi/indicator`, `build/pi/media_ingest`, `build/pi/uart_rx_dump`.
+Компилятор: arm-zig-cc-a53 → Cortex-A53 (ARMv8-A 32-bit), hard-float.
+Результат: `build/pi/indicator`, `build/pi/media_ingest`, `build/pi/uart_rx_dump`, `build/pi/notif_test`.
 
 ### Полный цикл (с хоста)
 
@@ -203,8 +209,9 @@ just pi::deploy-sounds    # WAV файлы → /data/sounds/
 just pi::deploy-splash    # boot splash.jpg
 just pi::deploy-video     # output.mp4 → /data/videos/
 just pi::deploy-rust      # pi_nku_sync + pi_nku_menu
-just pi::deploy-tools     # uart_rx_dump + MUp-rpi0
+just pi::deploy-tools     # uart_rx_dump + notif_test + MUp-rpi0
 just pi::deploy-scripts   # run_setup.sh, first_boot.sh, smoke_test.sh, check_resources.sh
+just pi::deploy-boot      # deploy/boot/config.txt → /boot (бэкап .bak; НЕ cmdline.txt)
 ```
 
 Деплой использует rsync. Pi должна быть доступна по SSH-ключу.
@@ -249,7 +256,7 @@ just pi::deploy-debug
 just pi::gdbserver-start
 # Терминал "висит" — туннель активен пока окно открыто
 
-# 4. В VSCode: F5 → "🐛 Debug: indicator (Pi Zero W)"
+# 4. В VSCode: F5 → "🐛 Debug: indicator (Pi Zero 2W)"
 #    Breakpoint → Variables → Step (F10/F11)
 
 # 5. Смотреть stdout программы (хост):
@@ -276,21 +283,51 @@ just pi::logs-tail [n]    # последние N строк обоих серв�
 just pi::status           # статус всех сервисов
 just pi::restart          # перезапустить indicator
 just pi::restart-audio    # перезапустить i2s-silence.service (при зависании dmix)
-just pi::smoke            # smoke test после деплоя
-just pi::check-resources  # валидация 144 ресурсов, конфигов, bind-монтов
+just pi::test-smoke       # smoke test после деплоя (26 проверок)
+just pi::check-resources  # валидация ~107 ресурсов, конфигов, bind-монтов
 just pi::test-audio       # проверить аудио (aplay тестового WAV)
 just pi::test-notif       # тест SPRITE_NOTIFICATION — показать все 8 PNG на живом дисплее
 just pi::test-video       # ffmpeg test.mp4 → Pi → omxplayer
-just pi::dump             # uart_rx_dump (indicator стоп → слушать → поднять)
-just pi::dump-passive     # uart_rx_dump без остановки indicator
+just pi::uart-dump        # uart_rx_dump (indicator стоп → слушать → поднять)
+just pi::uart-dump-passive # uart_rx_dump без остановки indicator
 just pi::top              # CPU/RAM
 just pi::df               # место на SD-карте
-just pi::backup-image /dev/diskN  # создать .img.gz
 just pi::update-start      # overlayfs выключить + reboot (начало обновления)
 just pi::update-finish     # overlayfs включить + reboot (конец обновления)
 just pi::overlay-status    # показать статус overlayfs
 just pi::reboot            # перезагрузить Pi
 ```
+
+---
+
+## Golden image (factory image)
+
+Образ собирается с нуля на чистой плате (Gold Master, MASTER_PLAN_HD §F5).
+Скрипты образа — в привилегированном `ubuntu:22.04` (losetup + kpartx), рецепты делают это сами.
+
+```bash
+just pi::prepare-image wpa_supplicant.conf   # Buster → p1 256M · p2 8G · p3 4G LABEL=data, /boot
+# balenaEtcher → SD → загрузка платы (hostname raspberrypi, PI_HOST=raspberrypi.local)
+just pi::setup-ssh
+just pi::setup-pi                            # пакеты, ALSA (P-36), /data, WiFi на /data, локаль
+just pi::deploy-full && just pi::enable-services && just pi::restart
+just pi::test-smoke && just pi::check-resources   # + проверка с MCU (uart-dump, setup: status=ok)
+ssh pi@raspberrypi.local sudo poweroff
+just pi::backup-image /dev/diskN             # только съёмный диск, с подтверждением
+just pi::cleanup-image indicator-hd-raw-YYYYMMDD.img.gz   # → indicator-hd-base-YYYYMMDD.img.gz
+just pi::inspect-image indicator-hd-base-YYYYMMDD.img.gz
+```
+
+| Скрипт | Что делает |
+|---|---|
+| `scripts/prepare_base_image.sh` | 3 раздела до первой загрузки; `cmdline.txt` из `deploy/boot/` с PARTUUID образа (без `init_resize`, без `console=serial0`); `config.txt`, `ssh`, проверенный `wpa_supplicant.conf` в `/boot` |
+| `scripts/setup_pi.sh` | Пакеты, ALSA + `alsactl store` (P-36), `LABEL=data` в fstab, WiFi на `/data` + bind-mount, `first_boot_done` на эталонной плате, локаль ru_RU + CyrSlav Terminus, overlayfs OFF |
+| `scripts/cleanup_image.sh` | Проверяет fstab / first_boot.sh, сбрасывает hostname, SSH host keys, machine-id, WiFi, логи, `first_boot_done`; zerofree; обрезает хвост после p3 |
+| `scripts/inspect_image.sh` | Read-only: разметка, fsck, минимальный размер ФС |
+| `scripts/shrink_image.sh` | Опционально: ужать p3, если нужны карты < 16 GB |
+| `scripts/first_boot.sh` | На новом устройстве: hostname `indicator-hd-<serial>`, SSH keys, machine-id, WiFi seed из `/boot`, overlayfs ON, reboot |
+
+Прошивка на производстве — [`FLASHING_GUIDE.md`](FLASHING_GUIDE.md).
 
 ---
 
@@ -305,7 +342,7 @@ cd lift-indicator
 
 # 2. Переменные окружения
 cp .env.example .env
-# Отредактировать: PI_HOST=indicator-01.local
+# Отредактировать: PI_HOST=raspberrypi.local (свежая плата) или indicator-hd-<serial>.local
 
 # 3. Первичная настройка (один раз):
 just pi::setup-ssh           # SSH-ключ → Pi
@@ -318,22 +355,22 @@ just pi::build-image         # собрать Docker-образ indicator-build
 
 # 5. В devcontainer:
 just build::test   # 6/6 суитов зелёных — всё в порядке
-just build::pi     # ARM32 бинари собираются без ошибок
+just build::pi     # ARM-бинари под Cortex-A53 собираются без ошибок
 
 # 6. С хоста (первичная настройка Pi):
 just pi::setup-pi      # пакеты, ALSA, /data layout, fstab bind-монты
 just pi::deploy-full   # все бинари + ресурсы + звуки + конфиги + видео
 just pi::enable-services  # systemctl enable для всех сервисов
-just pi::smoke         # финальная проверка
+just pi::test-smoke    # финальная проверка
 
 # 7. При разработке (итерация):
 just ship              # build::pi → deploy → check-resources → restart
 
 # 8. Прошивка нового устройства:
 
-#    - balenaEtcher → indicator-base-YYYYMMDD.img.gz → карта
-#    - Положить wpa_supplicant.conf в /boot/ (FAT32, с macOS)
-#    - Вставить карту, включить Pi → 2 авто-ребута → готово
+#    - balenaEtcher → indicator-hd-base-YYYYMMDD.img.gz → карта
+#    - Положить wpa_supplicant.conf в /boot/ (FAT32, с macOS; 2.4 GHz, WPA2)
+#    - Вставить карту, включить Pi → first_boot.sh → 1 авто-ребут → готово
 
 # 9. Обновление ПО на production:
 
@@ -350,7 +387,7 @@ just pi::update-finish  # overlayfs ON + reboot
 `.env` в корне — единый источник конфигурации. `.env.example` коммитится в git, `.env` — нет.
 
 ```ini
-PI_HOST=indicator-01.local   # hostname Pi (или IP)
+PI_HOST=raspberrypi.local    # свежая плата; production: indicator-hd-<serial>.local (или IP)
 PI_USER=pi
 PI_DIR=/home/pi/indicator
 BUILD_DIR=build
@@ -371,16 +408,17 @@ build/
 │   ├── test_config
 │   └── test_uart
 │
-└── pi/                      ← Pi бинари (arm-zig-cc, ARMv6)
+└── pi/                      ← Pi бинари (arm-zig-cc-a53, Cortex-A53)
     ├── compile_commands.json   ← используется clangd для platform/
     ├── indicator               ← главный демон
     ├── media_ingest            ← USB демон
     ├── uart_rx_dump            ← диагностическая утилита
+    ├── notif_test              ← тест SPRITE_NOTIFICATION
     └── platform/dispmanx/
         └── libdispmanx_renderer.a
 
 build/pi-debug/              ← debug-бинари (-g3 -O0)
-    └── indicator-debug
+    └── indicator               ← деплоится как PI_DIR/indicator-debug
 ```
 
 `build/` примонтирован как bind mount в devcontainer — файлы видны и на хосте, и в контейнере одновременно.
@@ -403,15 +441,16 @@ build/pi-debug/              ← debug-бинари (-g3 -O0)
 │   └── splash.jpg
 ├── scripts/
 │   ├── run_setup.sh       ← splash → pull → menu → push → status
-│   ├── first_boot.sh      ← hostname + SSH keys (один раз)
+│   ├── first_boot.sh      ← hostname + SSH keys + WiFi seed + overlayfs ON (один раз)
 │   ├── smoke_test.sh
 │   └── check_resources.sh
 └── tools/
     ├── uart_rx_dump
+    ├── notif_test
     └── MUp-rpi0
 
 /data/                     ← p3 ext4 раздел (LABEL=data), writable, persistent при overlayfs
-├── first_boot_done        ← флаг первого старта
+├── first_boot_done        ← флаг первого старта (на эталонной плате ставит setup_pi.sh, снимает cleanup_image.sh)
 ├── setup_status           ← ok | pull_failed | push_failed | pending
 ├── pi_nku_configs/
 ├── resources/
@@ -436,10 +475,16 @@ build/pi-debug/              ← debug-бинари (-g3 -O0)
 | SSH: `Bad configuration option: usekeychain` | macOS SSH config в контейнере | Rebuild Container (postCreateCommand патчит автоматически) |
 | GDB: `Connection timed out` на `localhost:3333` | Туннель на хосте, gdb в контейнере | Использовать `host.docker.internal:3333` |
 | `printf` не виден в debug console | stdout буферизован в файл | `just pi::debug-output` или добавить `fflush(stdout)` |
-| SIGSEGV до `main()` при первом запуске | `libpng16.a` ARMv7 статически слинкована | Запустить `just pi::fetch-png-sysroot` (берёт `.so` с Pi) |
+| SIGSEGV до `main()` при первом запуске (только Zero W / `dev-pi`) | `libpng16.a` ARMv7 статически слинкована | Запустить `just pi::fetch-png-sysroot` (берёт `.so` с Pi) |
 | `indicator.service: Failed with result 'timeout'` при stop | dbus-daemon вне pgroup omxplayer | Ожидаемо (P-24), не блокирует; исправить в Deploy v2 |
 | Видео зависает после длительного простоя | VideoCore IV dormant state | `renderer_keepalive()` вызывается из watchdog tick — уже реализовано |
-| `just pi::dump` — порт хардкодирован | TODO в pi.just | Временно: /dev/ttyAMA0 115200 работает на реальном устройстве |
+| `just pi::uart-dump` — порт хардкодирован | `/dev/ttyAMA0 115200` в pi.just | Работает: `/dev/serial0 → ttyAMA0` при `dtoverlay=disable-bt` |
+| В `uart_rx_dump` много `ERROR_SYNC1` | Прошивка MCU после каждого фрейма шлёт ту же строку текстом (`#STM:…#\r\n`) | На Pi безвредно: `indicator` считает `parse_errors=0`; убрать — в прошивке STM32 |
+| `amixer: Unable to find simple control 'PCM'` при старте | softvol создаёт контрол при первом открытии PCM (P-36) | `setup_pi.sh` делает `alsactl store`; вручную: `aplay -D softvol -d 1 … /dev/zero && sudo alsactl store` |
+| `apt: нет кандидата …` в setup_pi.sh | Индексы legacy.raspbian.org не скачались / часы до NTP | Повторить `just pi::setup-pi` (скрипт ждёт NTP 60 с) |
+| На tty1 квадраты вместо кириллицы | Консольный шрифт Lat15 (CODESET=guess) | `setup_pi.sh` шаг 10.5: CyrSlav Terminus 14x28 |
+| WiFi не подключается при верном пароле | Сеть 5 GHz / WPA3 | Только 2.4 GHz WPA2; `ssid`/`psk` — в прямых кавычках |
+| `ssh -o BatchMode=yes` → Permission denied, хотя ключ принят | Ключ с passphrase не в ssh-agent | `ssh-add --apple-use-keychain ~/.ssh/id_ed25519` |
 | Звук пропал, aplay зависает без вывода | dmix IPC deadlock (P-34): aplay убит в момент удержания семафора | `sudo killall -9 aplay && ipcs -m | awk 'NR>3 && $3=="pi"' | xargs -r ipcrm -m && just pi::restart-audio` |
 | `i2s-silence.service` падает с кодом 1 при старте | I2S карта ещё не инициализирована (P-37) | Убедиться что в service есть `ExecStartPre` ожидающий card 0; `just pi::setup-pi` устанавливает правильный unit |
 | Щелчки при каждом звуке | Нет I2S keepalive | `just pi::restart-audio` — проверить что `i2s-silence.service` active |

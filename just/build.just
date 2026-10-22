@@ -40,7 +40,7 @@ test-verbose: _configure-host
     cd "{{BUILD_DIR}}/host" && ctest -V
 
 # =============================================================================
-# ГРУППА: pi — кросс-компиляция под Raspberry Pi Zero W
+# ГРУППА: pi — кросс-компиляция под Raspberry Pi Zero 2W (Cortex-A53)
 # =============================================================================
 
 [private]
@@ -86,15 +86,15 @@ pi-notif-test: _configure-pi
 pi-debug:
     #!/usr/bin/env bash
     set -euo pipefail
-    cmake -B "build/pi-debug" \
+    cmake -B "{{BUILD_DIR}}/pi-debug" \
         -DCMAKE_TOOLCHAIN_FILE=cmake/Toolchain-RPiZero2W.cmake \
         -DCMAKE_BUILD_TYPE=Debug \
         -DCMAKE_C_FLAGS_DEBUG="-g3 -O0 -fno-omit-frame-pointer" \
         -DINDICATOR_PLATFORM_DISPMANX=ON \
         -DINDICATOR_BUILD_TESTS=OFF \
         -DINDICATOR_BUILD_INGEST=OFF
-    cmake --build "build/pi-debug" --parallel
-    echo "  ✅  Debug build: build/pi-debug/indicator"
+    cmake --build "{{BUILD_DIR}}/pi-debug" --parallel
+    echo "  ✅  Debug build: {{BUILD_DIR}}/pi-debug/indicator"
 
 # =============================================================================
 # ГРУППА: quality — форматирование и статический анализ

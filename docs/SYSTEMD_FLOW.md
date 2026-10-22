@@ -160,4 +160,24 @@ sequenceDiagram
 | `i2s-silence` | simple | always · 2 s | card 0 ready | → indicator |
 | `indicator` | simple | always · 2 s | — | → media-ingest |
 | `media-ingest` | simple | on-failure · 10 s | бинарь существует | — |
+
+### Системные юниты, которые настраивает `setup_pi.sh`
+
+| Юнит | Состояние | Зачем |
+|---|---|---|
+| `alsa-restore.service` | штатный, enabled | Восстанавливает `/var/lib/alsa/asound.state` → пересоздаёт user-контрол softvol `PCM` до `sound.target` (P-36) |
+| `wpa_supplicant.service` | **enabled** | Явный старт до dhcpcd вместо D-Bus activation — race при overlayfs initramfs (P-38) |
+| `raspberrypi-net-mods.service` | **masked** | Штатно делает `mv /boot/wpa_supplicant.conf /etc/…`, что ломает bind-mount `/data/wpa_supplicant.conf`; seed обрабатывает `first_boot.sh` |
+| `console-setup.service` | штатный | CyrSlav Terminus 14x28 — кириллица на tty1 (`run_setup.sh`, `pi_nku_menu`) |
+| `getty@tty1.service` | **masked** | tty1 отдан `indicator-setup` (TUI-меню) |
+| `serial-getty@ttyAMA0`, `hciuart`, `bluetooth` | disabled | UART свободен для STM32 |
+
+### indicator-firstboot: эталонная плата vs новое устройство
+
+| | `/data/first_boot_done` | Поведение |
+|---|---|---|
+| Эталонная плата (сборка golden image) | ставит `setup_pi.sh` | first_boot **не** запускается — hostname, ключи и overlayfs не меняются |
+| Factory image | снимает `cleanup_image.sh` | — |
+| Новое устройство, старт 1 | нет → запуск | hostname `indicator-hd-<serial>`, SSH keys, machine-id, WiFi seed `/boot` → `/data`, `enable_overlayfs`, флаг, reboot |
+| Новое устройство, старт 2+ | есть | rootfs read-only (overlayfs), `/data` — p3 ext4 |
 | `indicator.target` | target | — | — | groups indicator + media-ingest |

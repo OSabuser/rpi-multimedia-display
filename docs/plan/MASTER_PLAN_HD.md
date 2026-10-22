@@ -1,6 +1,6 @@
 # Lift Indicator FullHD — Мастер-план (ветка `dev-pi2w`)
 
-> **Статус:** Фаза F0 — НЕ НАЧАТА. Базовый проект (ветка `dev-pi`, Фазы 0–7 + Deploy + Deploy v2) — ЗАКРЫТ ПОЛНОСТЬЮ.
+> **Статус (2026-10-22):** Фазы F0–F4 — ЗАКРЫТЫ ✅ (F0–F3: отчёты в `docs/plan/v_hd_phases/`; F4: испытания на объекте + P-36). **F5** (factory image) — В РАБОТЕ: конвейер готов, эталонная плата пройдена до снимка (21.10), снимок отложен (плата повреждена при ночном прогоне — разбор у схемотехника). Базовый проект (ветка `dev-pi`, Фазы 0–7 + Deploy + Deploy v2) — ЗАКРЫТ ПОЛНОСТЬЮ.
 > **Стек:** C11 · DispmanX · omxplayer · ALSA · systemd · CMake · Docker · just *(без изменений)*
 > **Компилятор:** `zig cc` (`arm-zig-cc-a53` wrapper) — ARMv8-A 32-bit, cortex\_a53, hard-float
 > **Устройство:** Raspberry Pi Zero 2W · BCM2710A1 · 4× Cortex-A53 · Debian Buster Lite (armhf)
@@ -95,6 +95,16 @@ P-29 (ARROW slow path): на 4× A53 destroy+recreate, вероятно, ста�
 
 ## 4. Фазы
 
+| Фаза | Статус | Отчёт |
+|---|---|---|
+| F0 — Toolchain, сборка | ✅ ЗАКРЫТА | `v_hd_phases/PHASE_F0_REPORT.md` |
+| F1 — Bring-up устройства | ✅ ЗАКРЫТА | `v_hd_phases/PHASE_F1_REPORT.md` |
+| F2 — FullHD renderer + font renderer | ✅ ЗАКРЫТА | `v_hd_phases/PHASE_F2_REPORT.md` |
+| F3 — FullHD video + media-ingest | ✅ ЗАКРЫТА | `v_hd_phases/PHASE_F3_REPORT.md` |
+| F4 — Audio + интеграционные испытания | ✅ ЗАКРЫТА | испытания на объекте; P-36 закрыт 21.10, smoke 26/26 |
+| F5 — Deploy v2 (factory image) | 🔄 В РАБОТЕ | конвейер `just pi::prepare/backup/cleanup/inspect-image`; см. `DEV_ARCH.md` §Golden image |
+| F6 — Trunk-унификация | ⏳ НЕ НАЧАТА | — |
+
 ### Фаза F0 — Ветки, toolchain, сборка *(devcontainer, без железа)*
 
 | # | Пункт |
@@ -157,7 +167,7 @@ P-29 (ARROW slow path): на 4× A53 destroy+recreate, вероятно, ста�
 |---|---|
 | 1 | Аудио-валидация (та же плата): i2s-silence, dmix, softvol, преемптинг очереди — короткий прогон чеклиста Фазы 5 |
 | 2 | Полный интеграционный чеклист (по образцу `indicator_checklist_2.md`, 16 тестов) на 2W |
-| 3 | `just pi::smoke` / `smoke_test.sh` — адаптировать ожидания при необходимости |
+| 3 | `just pi::test-smoke` / `smoke_test.sh` — адаптировать ожидания при необходимости |
 
 **Выход:** интеграционные испытания PASS.
 
@@ -168,7 +178,8 @@ P-29 (ARROW slow path): на 4× A53 destroy+recreate, вероятно, ста�
 | 1 | Повторить процедуру Фазы 6: 3 раздела, p3 `LABEL=data`, fstab-порядок |
 | 2 | overlayfs: `raspi-config nonint enable/disable_overlayfs` — верифицировать на 2W (ожидание: идентично, тот же Buster) |
 | 3 | WiFi seed `/boot/wpa_supplicant.conf` → `/data/` (механизм Фазы 6 без изменений) |
-| 4 | Factory image: cleanup + `indicator2w-base-YYYYMMDD.img.gz`; factory validation |
+| 4 | Factory image: cleanup + `indicator-hd-base-YYYYMMDD.img.gz`; factory validation |
+| 5 | Конвейер образа (Docker `--privileged`, ubuntu:22.04): `prepare_base_image.sh` (3 раздела до первой загрузки) → плата: `setup_pi.sh` + `deploy-full` → `just pi::backup-image` → `cleanup_image.sh` → `inspect_image.sh` → `shrink_image.sh` |
 
 **Выход:** производственный образ для 2W-линейки.
 
@@ -207,27 +218,31 @@ P-29 (ARROW slow path): на 4× A53 destroy+recreate, вероятно, ста�
 
 | ID | Вопрос | Статус | Влияет на |
 |----|--------|--------|-----------|
-| В2-01 | Панель native portrait (EDID 1080×1920) или landscape + `display_rotate`? omxplayer `--orientation` нужен? | ⏳ ОТКРЫТ — решается на железе в F1 | config.txt, video\_player.c (аргументы), renderer |
-| В2-02 | Font renderer: API, формат вывода (буфер? PNG? прямой DispmanX?), зависимости, лицензия | ⏳ ОТКРЫТ — пользователь передаст код | F2, renderer.h |
-| В2-03 | Кто и в чём рендерит новые PNG-ассеты (BACK, modes, arrows, weights)? Исходники (SVG/PSD) есть? | ⏳ ОТКРЫТ | F2 п.4 |
-| В2-04 | Текущее значение `gpu_mem` в deploy/boot/config.txt | ⏳ ОТКРЫТ — проверить в F1 | config.txt |
-| В2-05 | Hostname нового устройства (`indicator-03.local`?) | ⏳ ОТКРЫТ | .env, F1 |
-| В2-06 | P-29 на A53: закрыть как неактуальный или доделать OPACITY-путь | ⏳ ОТКРЫТ — по замеру F2 п.7 | renderer\_impl.c |
+| В2-01 | Панель native portrait (EDID 1080×1920) или landscape + `display_rotate`? omxplayer `--orientation` нужен? | ✅ ЗАКРЫТ (F0) — `display_hdmi_rotate=3`; ротация видео на уровне ffmpeg (F3) | config.txt, video\_player.c (аргументы), renderer |
+| В2-02 | Font renderer: API, формат вывода (буфер? PNG? прямой DispmanX?), зависимости, лицензия | ✅ ЗАКРЫТ (F2) — `fonts.h/c`, callback, ARGB8888 premultiplied, CalSans260 | F2, renderer.h |
+| В2-03 | Кто и в чём рендерит новые PNG-ассеты (BACK, modes, arrows, weights)? Исходники (SVG/PSD) есть? | ✅ ЗАКРЫТ (F2) — ассеты 1080×1920 готовы и задеплоены | F2 п.4 |
+| В2-04 | Текущее значение `gpu_mem` в deploy/boot/config.txt | ✅ ЗАКРЫТ (F0/F2) — 128 MB, пик ~24 MB | config.txt |
+| В2-05 | Hostname нового устройства (`indicator-03.local`?) | ✅ ЗАКРЫТ (F0) — `indicator-hd-<serial>` (в `scripts/first_boot.sh` с 21.10) | .env, F1 |
+| В2-06 | P-29 на A53: закрыть как неактуальный или доделать OPACITY-путь | ✅ ЗАКРЫТ (F2) — визуально незаметно, OPACITY-путь не нужен | renderer\_impl.c |
 | В2-07 | Пересборка pi\_nku\_sync / pi\_nku\_menu под ARMv7 (опциональная оптимизация) | ⏳ ОТКРЫТ — низкий приоритет | third\_party |
+| P-36 | `amixer scontrols` пустой на `hifiberry-dac` (softvol не создаёт контрол до открытия PCM) | ✅ ЗАКРЫТ (2026-10-21) — `setup_pi.sh` открывает softvol и делает `alsactl store`; `alsa-restore` пересоздаёт user-контрол `PCM` на загрузке; smoke 26/26 | audio, setup_pi.sh |
 
 ---
 
-## 7. Контекст для Фазы F0
+## 7. Контекст для Фазы F5
 
 При начале нового треда передать:
 
-1. Этот документ (`MASTER_PLAN.md` ветки `dev-pi2w`)
-2. `cmake/Toolchain-RPiZeroW.cmake` + текущий `Toolchain-RPiZero2W.cmake` (legacy)
-3. `build-env/Dockerfile`, `just/build.just`
+1. Этот документ (`docs/plan/MASTER_PLAN_HD.md`)
+2. `docs/DEV_ARCH.md` §Golden image, `docs/SYSTEMD_FLOW.md`, `docs/FLASHING_GUIDE.md`
+3. `scripts/prepare_base_image.sh`, `setup_pi.sh`, `first_boot.sh`, `cleanup_image.sh`, `just/pi.just` (группа `image`)
+
+**Состояние на 2026-10-22:** на эталонной плате пройдены prepare → setup-pi → deploy-full → smoke 26/26 →
+check-resources → UART с MCU (`setup: status=ok`). Не сделано: push через `pi_nku_menu`, ночной прогон,
+снимок (`backup-image` → `cleanup-image` → `inspect-image`), проверка заводского сценария на чистой карте.
 
 **Стартовая фраза:**
-> Начинаем Фазу F0 ветки dev-pi2w — toolchain под Cortex-A53.
-> Прикладываю MASTER_PLAN (2W), оба toolchain-файла, Dockerfile и build.just.
+> Продолжаем F5 ветки dev-pi2w: эталонная плата → снимок → factory image → проверка по FLASHING_GUIDE.
 
 ---
 

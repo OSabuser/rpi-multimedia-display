@@ -14,11 +14,13 @@ log() { logger -t indicator-firstboot "$*"; echo "[firstboot] $*"; }
 log "First-boot provisioning started"
 
 # ── 1. Уникальный hostname по серийнику SoC ───────────────────────────────────
-# Серийник Pi Zero W уникален для каждого чипа
+# Серийник SoC уникален для каждого чипа; префикс -hd- — линейка Pi Zero 2W (В2-05)
 SERIAL=$(grep Serial /proc/cpuinfo | awk '{print $3}' | tail -c 7)
-HOSTNAME="indicator-${SERIAL}"
+HOSTNAME="indicator-hd-${SERIAL}"
 hostnamectl set-hostname "$HOSTNAME"
-grep -qF "$HOSTNAME" /etc/hosts || echo "127.0.1.1 $HOSTNAME" >> /etc/hosts
+# старое имя golden image из /etc/hosts убираем — иначе sudo резолвит не то имя
+sed -i '/^127\.0\.1\.1[[:space:]]/d' /etc/hosts
+echo "127.0.1.1 $HOSTNAME" >> /etc/hosts
 log "Hostname: $HOSTNAME"
 
 # ── 2. Свежие SSH host keys ───────────────────────────────────────────────────
@@ -32,6 +34,23 @@ systemd-machine-id-setup
 [ -e /var/lib/dbus/machine-id ] || \
     ln -sf /etc/machine-id /var/lib/dbus/machine-id
 log "machine-id regenerated"
+
+# ── 3.5. WiFi seed: /boot/wpa_supplicant.conf → /data ─────────────────────────
+# /data/wpa_supplicant.conf bind-монтирован в /etc/wpa_supplicant/ (setup_pi.sh),
+# поэтому пишем через перенаправление — inode сохраняется, bind-mount видит
+# новое содержимое. CR убираем: файл обычно готовят в Windows.
+# raspberrypi-net-mods.service замаскирован setup_pi.sh — seed обрабатываем здесь.
+WPA_SEED=/boot/wpa_supplicant.conf
+WPA_DATA=/data/wpa_supplicant.conf
+if [ -f "$WPA_SEED" ]; then
+    tr -d '\r' < "$WPA_SEED" > "$WPA_DATA"
+    chmod 600 "$WPA_DATA"
+    rm -f "$WPA_SEED"
+    WIFI_STATUS="seed из /boot применён"
+else
+    WIFI_STATUS="seed не найден — оставлен $WPA_DATA"
+fi
+log "WiFi: $WIFI_STATUS"
 
 # ── 4. Включить overlayfs (rootfs станет read-only после перезагрузки) ────────
 raspi-config nonint enable_overlayfs
@@ -48,6 +67,7 @@ echo "======================================================="
 printf "  Hostname    : %s\n" "$HOSTNAME"
 echo "  SSH keys    : пересозданы"
 echo "  machine-id  : пересоздан"
+printf "  WiFi        : %s\n" "$WIFI_STATUS"
 echo "  overlayfs   : ВКЛЮЧЁН (активируется после перезагрузки)"
 echo ""
 echo "  Перезагрузка через 5 секунд..."

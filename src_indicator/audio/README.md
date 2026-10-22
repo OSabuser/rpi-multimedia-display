@@ -1,7 +1,7 @@
 # Модуль `audio` — техническая документация
 
 **Файлы:** `src/audio/audio.h`, `src/audio/audio.c`  
-**Зависимости:** `src/domain/sound_map.h`, POSIX threads, `aplay`, `amixer`  
+**Зависимости:** `src_indicator/domain/sound_map.h`, POSIX threads, `aplay`, `amixer`  
 **Платформа:** Raspberry Pi Zero 2W / Debian Buster / ALSA
 
 ---
@@ -187,14 +187,20 @@ playing 'button.wav' prio=2 → music 'musN.wav'  (следующий трек)
 ### 6.1 Конфигурация
 
 ```bash
-/dev/i2s (MAX98357A)
-    └── speakerbonnet  (hw:0,0)
-        └── dmixer     (dmix — разделяемый микшер, ipc_key=1024)
+I2S-ЦАП: hifiberry-dac / PCM5102A (плата 2W; на Zero W — MAX98357A)
+    └── speakerbonnet  (hw:0,0; имя PCM историческое)
+        └── dmixer     (dmix — разделяемый микшер, ipc_key=1024, 48 kHz / S32_LE / 2ch)
             └── softvol  (программный контрол 'PCM', 0–100%)
                 └── !default  (plug → softvol)
 ```
 
 `i2s-silence.service` держит `dmixer` постоянно активным через `/dev/zero`, устраняя щелчки PLL при старте/конце каждого WAV.
+
+**Контрол `PCM` (P-36).** softvol создаёт его только при первом открытии своего PCM, а `i2s-silence`
+пишет прямо в `dmixer`. Без мер на старте `indicator` был бы `amixer: Unable to find simple control 'PCM'`
+и первая громкость не применилась бы. `setup_pi.sh` один раз открывает `softvol` и делает
+`alsactl store`; контрол помечен `user`, и `alsa-restore.service` пересоздаёт его на каждой загрузке
+до `sound.target` (indicator стартует после). Проверка: `amixer scontrols` сразу после загрузки.
 
 ### 6.2 Управление громкостью
 
@@ -210,7 +216,9 @@ Latency amixer: ~15–25 мс. Вызывается до `spawn_aplay()`, поэ
 
 ### 6.3 Формат WAV
 
-Все файлы в `/data/sounds/` должны быть в формате **48000 Hz / S16_LE / stereo**. Несовпадение формата с `slave` в `dmixer` приведёт к plug-конвертации и потенциальным задержкам.
+Все файлы в `/data/sounds/` — **48000 Hz / S16_LE / stereo**. Частота совпадает со `slave` в `dmixer`
+(48 kHz / S32_LE), поэтому `plug` делает только S16→S32 без ресемплинга. Файл с другой частотой
+потребует ресемплинга и добавит задержку.
 
 ---
 

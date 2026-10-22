@@ -215,7 +215,7 @@ omxplayer продолжает декодировать, но кадры пер�
 
 | Зависимость | Откуда | Линковка |
 |---|---|---|
-| `bcm_host` | `/opt/vc/lib/` (Pi sysroot) | статическая `-L/opt/vc/lib` |
+| `bcm_host` | `/opt/vc/lib/` (Pi sysroot, в Docker-образе) | динамическая `libbcm_host.so` (`-L/opt/vc/lib`) |
 | `libpng16` | `build-env/pi-sysroot/usr/lib/` | динамическая `-lpng16` |
 | `libz` | `build-env/pi-sysroot/usr/lib/` | динамическая `-lz` |
 

@@ -86,7 +86,11 @@ NEW_P3_SECTORS=$(( NEW_P3_MB * 1024 * 1024 / SECTOR_SIZE ))
 NEW_END_SECTOR=$(( P3_START + NEW_P3_SECTORS - 1 ))
 
 echo "  ✂️   parted resizepart 3 → ${NEW_END_SECTOR}s..."
-parted ---pretend-input-tty "${LOOP_DEV}" resizepart 3 "${NEW_END_SECTOR}s" Yes
+# Подтверждение «Shrinking a partition…» parted спрашивает даже со -s;
+# ---pretend-input-tty читает ответ из stdin (аргумент Yes без tty не работает)
+printf 'Yes\n' | parted ---pretend-input-tty "${LOOP_DEV}" unit s resizepart 3 "${NEW_END_SECTOR}s"
+parted -sm "${LOOP_DEV}" unit s print | awk -F: -v want="${NEW_END_SECTOR}s" \
+    '$1==3 && $3!=want {print "  ❌  p3 end = " $3 ", ожидалось " want; exit 1}'
 
 losetup -d "${LOOP_DEV}"
 LOOP_DEV=""
@@ -104,6 +108,6 @@ echo "  📦  Пересжимаем → ${OUT}..."
 gzip -c "${WORK_IMG}" > "${OUT}"
 
 echo "  ✅  Готово: ${OUT}"
-echo "  ℹ️   Дальше: прошить balenaEtcher → just pi::smoke + check-resources,"
+echo "  ℹ️   Дальше: прошить balenaEtcher → just pi::test-smoke + check-resources,"
 echo "      проверить именно на картах, где раньше не влезало, прежде чем"
 echo "      считать образ новой рабочей версией."
