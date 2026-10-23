@@ -161,6 +161,25 @@ else
 fi
 
 # Проверка omxplayer через watchdog-строку (появляется каждые 30 с)
+# Логи: rsyslog выключен, journald в RAM с лимитом (setup_pi.sh шаг 10.6)
+if systemctl is-active --quiet rsyslog.service; then
+    fail "rsyslog активен — /var/log может переполнить rootfs (setup_pi.sh шаг 10.6)"
+else
+    ok "rsyslog выключен"
+fi
+JOURNAL_STORAGE=$(grep -hE "^Storage=" /etc/systemd/journald.conf.d/*.conf 2>/dev/null | tail -1 || true)
+if [ "${JOURNAL_STORAGE}" = "Storage=volatile" ]; then
+    ok "journald: Storage=volatile ($(journalctl --disk-usage 2>/dev/null | grep -oE '[0-9.]+[KMG]' | head -1 || echo '?'))"
+else
+    fail "journald не ограничен (нет Storage=volatile в journald.conf.d)"
+fi
+ROOT_USE=$(df --output=pcent / | tail -1 | tr -dc '0-9')
+if [ "${ROOT_USE:-100}" -lt 90 ]; then
+    ok "rootfs занят на ${ROOT_USE}%"
+else
+    fail "rootfs занят на ${ROOT_USE}% — проверить /var/log (du -xh /var | sort -h | tail)"
+fi
+
 LOG_35S=$(journalctl -u indicator --since "35 sec ago" --no-pager -q 2>/dev/null || true)
 LOG_5M=$(journalctl -u indicator --since "5 min ago" --no-pager -q 2>/dev/null || true)
 if grep -q "watchdog:" <<< "$LOG_35S"; then
@@ -171,8 +190,16 @@ else
     warn "Нет watchdog-строки за 5 мин — нормально сразу после старта"
 fi
 
-echo ""
 
+# Упавшие юниты (dphys-swapfile при overlayfs и т.п.)
+FAILED_UNITS=$(systemctl --failed --no-legend --plain 2>/dev/null | awk '{print $1}' | tr '\n' ' ' || true)
+if [ -z "${FAILED_UNITS// /}" ]; then
+    ok "Нет упавших systemd-юнитов"
+else
+    fail "Упавшие юниты: ${FAILED_UNITS}— systemctl --failed"
+fi
+
+echo ""
 # ─── 10. Размер GPU-памяти ──────────────────────────────────────────────────
 echo "── 10. Ресурсы ─────────────────────────────────────────"
 if command -v vcgencmd &>/dev/null; then
@@ -183,12 +210,33 @@ if command -v vcgencmd &>/dev/null; then
         fail "gpu_mem=${GPU_MEM}MB — требуется ≥128 для 1080p DispmanX"
     fi
 
-    TEMP=$(vcgencmd measure_temp 2>/dev/null | grep -oP '[\d.]+' || echo "?")
-    if echo "${TEMP}" | grep -qP '^\d'; then
-        if (( $(echo "${TEMP} < 80" | bc -l 2>/dev/null || echo 1) )); then
-            ok "CPU temp=${TEMP}°C (< 80°C — норма)"
+    # Пороги: F3 — 48–55 °C под 1080p-видео; с 80 °C BCM2710 снижает частоту.
+    # Сравнение целой части в bash: bc в Buster Lite нет (раньше `bc || echo 1`
+    # молча давал «норма» при любой температуре).
+    TEMP=$(vcgencmd measure_temp 2>/dev/null | grep -oE '[0-9]+(\.[0-9]+)?' || echo "?")
+    TEMP_INT=${TEMP%%.*}
+    if [[ "${TEMP_INT}" =~ ^[0-9]+$ ]]; then
+        if [ "${TEMP_INT}" -lt 70 ]; then
+            ok "CPU temp=${TEMP}°C (< 70°C — норма)"
+        elif [ "${TEMP_INT}" -lt 80 ]; then
+            warn "CPU temp=${TEMP}°C — повышенная (норма под видео 48–55°C)"
         else
-            warn "CPU temp=${TEMP}°C — высокая температура"
+            fail "CPU temp=${TEMP}°C — ≥ 80°C, частота снижается (радиатор/железо)"
+        fi
+    else
+        warn "CPU temp не прочитана: '${TEMP}'"
+    fi
+
+    # get_throttled: бит 0/16 — недонапряжение (сейчас/было), 1/17 — частота
+    # ограничена, 2/18 — троттлинг, 3/19 — soft temp limit
+    THR=$(vcgencmd get_throttled 2>/dev/null | cut -d= -f2)
+    if [[ "${THR}" =~ ^0x[0-9a-fA-F]+$ ]]; then
+        if (( THR & 0x10001 )); then
+            fail "throttled=${THR} — недонапряжение питания (сейчас или с момента загрузки)"
+        elif (( THR & 0xE000E )); then
+            fail "throttled=${THR} — тепловое ограничение частоты/троттлинг"
+        else
+            ok "throttled=${THR}"
         fi
     fi
 else

@@ -23,16 +23,16 @@
 resources_dir = /data/resources
 
 [slot.digit_left]
-x = 485
-y = 200
+x = 300 #285
+y = 375
 
 [slot.digit_right]
 x = 0
 y = 0
 
 [slot.arrow]
-x = 900
-y = 225
+x = 715 #700
+y = 400
 
 [slot.weight]
 x = 800

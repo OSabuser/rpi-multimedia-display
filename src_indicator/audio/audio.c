@@ -37,6 +37,7 @@
 #include "domain/sound_map.h"
 
 #include <errno.h>
+#include <fcntl.h>
 #include <pthread.h>
 #include <signal.h>
 #include <spawn.h>
@@ -133,8 +134,16 @@ static void set_alsa_volume(int vol_pct)
     (void) posix_spawnattr_setsigmask(&attr, &empty);
     (void) posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETSIGMASK);
 
+    /* stdout amixer (состояние контрола, 4 строки на вызов) — в /dev/null:
+     * иначе через stdout сервиса он попадает в journald и вытесняет полезные
+     * записи. stderr оставляем — ошибки amixer должны быть видны в журнале. */
+    posix_spawn_file_actions_t actions;
+    posix_spawn_file_actions_init(&actions);
+    (void) posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, "/dev/null", O_WRONLY, 0);
+
     pid_t pid;
-    int rc = posix_spawnp(&pid, "amixer", NULL, &attr, argv, environ);
+    int rc = posix_spawnp(&pid, "amixer", &actions, &attr, argv, environ);
+    posix_spawn_file_actions_destroy(&actions);
     posix_spawnattr_destroy(&attr);
 
     if (rc != 0)

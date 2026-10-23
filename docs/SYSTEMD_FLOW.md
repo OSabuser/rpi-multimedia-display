@@ -168,6 +168,10 @@ sequenceDiagram
 | `alsa-restore.service` | штатный, enabled | Восстанавливает `/var/lib/alsa/asound.state` → пересоздаёт user-контрол softvol `PCM` до `sound.target` (P-36) |
 | `wpa_supplicant.service` | **enabled** | Явный старт до dhcpcd вместо D-Bus activation — race при overlayfs initramfs (P-38) |
 | `raspberrypi-net-mods.service` | **masked** | Штатно делает `mv /boot/wpa_supplicant.conf /etc/…`, что ломает bind-mount `/data/wpa_supplicant.conf`; seed обрабатывает `first_boot.sh` |
+| `systemd-journald` | `journald.conf.d/indicator.conf` | `Storage=volatile`, `RuntimeMaxUse=16M`, файлы по 4M, `MaxLevelStore=info` — журнал только в RAM с ротацией, без DEBUG |
+| `apt-daily.timer`, `apt-daily-upgrade.timer`, `man-db.timer` | **masked** | При overlayfs пишут кэши в RAM-слой (22.10: apt-daily → 62 MB, overlay 1% → 34%); обновление ПО — `just pi::update-*` |
+| `dphys-swapfile.service` | disabled, `/var/swap` удалён | swapon в overlay невозможен; swap на SD изнашивает карту |
+| `rsyslog.service` | **masked** | Не пишет `/var/log/{syslog,kern.log}`: 22.10 поток ошибок brcmfmac заполнил ими rootfs (по 3 GB) |
 | `console-setup.service` | штатный | CyrSlav Terminus 14x28 — кириллица на tty1 (`run_setup.sh`, `pi_nku_menu`) |
 | `getty@tty1.service` | **masked** | tty1 отдан `indicator-setup` (TUI-меню) |
 | `serial-getty@ttyAMA0`, `hciuart`, `bluetooth` | disabled | UART свободен для STM32 |

@@ -25,8 +25,27 @@
   `wpa_supplicant` enabled (P-38), `raspberrypi-net-mods` masked, `first_boot_done` на эталонной плате,
   локаль ru_RU.UTF-8 + консольный шрифт CyrSlav Terminus 14x28, overlayfs OFF
 - `first_boot.sh`: hostname `indicator-hd-<serial>`, WiFi seed `/boot/wpa_supplicant.conf` → `/data`
+- `setup_pi.sh` шаг 10.6: журнал только в RAM с ротацией (`Storage=volatile`, `RuntimeMaxUse=16M`, файлы по 4M), rsyslog masked
+- `smoke_test.sh`: проверки rsyslog выключен / journald volatile / rootfs < 90%
 
 ### Fixed
+
+- `logrotate.service` failed после маскирования rsyslog (postrotate `logrotate.d/rsyslog` сигналит rsyslog) —
+  `setup_pi.sh` шаг 10.6 удаляет `/etc/logrotate.d/rsyslog`
+
+- Ночной прогон 22→23.10 (overlayfs ON): `apt-daily.timer` записал 62 MB кэша apt в RAM-слой overlayfs
+  (1% → 34%, `avail` 232 → 152 MB) — apt-daily / apt-daily-upgrade / man-db таймеры masked в `setup_pi.sh`
+- Журнал вмещал ~2 часа: `indicator` писал ~160 строк/мин — frame-лог переведён в `LOG_DEBUG`,
+  stdout `amixer` → `/dev/null`, journald `MaxLevelStore=info`
+
+- Заводская копия (overlayfs ON): `dphys-swapfile.service` failed — swapon на файле в overlay невозможен;
+  swap отключён в `setup_pi.sh`. Побочный эффект старого поведения: dphys-swapfile «трогал»
+  `/var/swap` → copy-up 100 MB в RAM-слой overlayfs (rootfs 55% → 1% после исправления). Лимиты journald приведены к размеру `/run` при overlayfs (37 MB):
+  `RuntimeMaxUse=16M`, `RuntimeKeepFree=8M` (было 24M / 64M — KeepFree больше всего `/run`)
+- `smoke_test.sh`: проверка «нет упавших systemd-юнитов»
+
+- Переполнение rootfs логами: поток ошибок ядра (brcmfmac, ~5/с) за ночь записал rsyslog'ом по 3 GB в
+  `syslog` и `kern.log` → read-only корень, сервисы без `/data` (22.10.2026)
 
 - P-36: контрол softvol `PCM` отсутствовал до первого воспроизведения — `alsactl store` в `setup_pi.sh`,
   восстановление `alsa-restore.service`
@@ -37,8 +56,12 @@
   идемпотентные bind-монты
 - `shrink_image.sh`: зависание на подтверждении `parted resizepart`
 - `smoke_test.sh`, `cleanup_image.sh`: ложные провалы `cmd | grep -q` под `pipefail` (SIGPIPE)
+- `smoke_test.sh`: проверка температуры всегда давала «норма» (`bc` нет в Buster Lite); теперь
+  < 70 °C ok, 70–79 warn, ≥ 80 fail, плюс разбор `vcgencmd get_throttled` (недонапряжение / троттлинг)
 
 ### Changed
+
+- README / FLASHING_GUIDE: требование питания **12 VDC** (24 VDC сожгло плату подсветки, 22.10.2026)
 
 - `PI_HOST` по умолчанию — `raspberrypi.local` (свежая плата); production — `indicator-hd-<serial>.local`
 - Документация приведена к Zero 2W: `DEV_ARCH.md`, `RPI_SYSROOT.md`, `SYSTEMD_FLOW.md`, `FLASHING_GUIDE.md`,

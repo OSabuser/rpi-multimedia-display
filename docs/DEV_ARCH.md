@@ -277,7 +277,7 @@ timeout 3 bash -c 'echo > /dev/tcp/host.docker.internal/3333' && echo OK || echo
 
 ```bash
 just pi::ssh              # SSH на Pi
-just pi::logs             # journalctl -u indicator -f
+just pi::logs             # journalctl -u indicator -f  (логи только в journald, в RAM; после reboot пусто)
 just pi::logs-ingest      # journalctl -u media-ingest -f
 just pi::logs-tail [n]    # последние N строк обоих сервисов (default 50)
 just pi::status           # статус всех сервисов
@@ -321,7 +321,7 @@ just pi::inspect-image indicator-hd-base-YYYYMMDD.img.gz
 | Скрипт | Что делает |
 |---|---|
 | `scripts/prepare_base_image.sh` | 3 раздела до первой загрузки; `cmdline.txt` из `deploy/boot/` с PARTUUID образа (без `init_resize`, без `console=serial0`); `config.txt`, `ssh`, проверенный `wpa_supplicant.conf` в `/boot` |
-| `scripts/setup_pi.sh` | Пакеты, ALSA + `alsactl store` (P-36), `LABEL=data` в fstab, WiFi на `/data` + bind-mount, `first_boot_done` на эталонной плате, локаль ru_RU + CyrSlav Terminus, overlayfs OFF |
+| `scripts/setup_pi.sh` | Пакеты, ALSA + `alsactl store` (P-36), `LABEL=data` в fstab, WiFi на `/data` + bind-mount, `first_boot_done` на эталонной плате, локаль ru_RU + CyrSlav Terminus, журнал только в RAM с ротацией (rsyslog masked), overlayfs OFF |
 | `scripts/cleanup_image.sh` | Проверяет fstab / first_boot.sh, сбрасывает hostname, SSH host keys, machine-id, WiFi, логи, `first_boot_done`; zerofree; обрезает хвост после p3 |
 | `scripts/inspect_image.sh` | Read-only: разметка, fsck, минимальный размер ФС |
 | `scripts/shrink_image.sh` | Опционально: ужать p3, если нужны карты < 16 GB |
@@ -483,6 +483,9 @@ build/pi-debug/              ← debug-бинари (-g3 -O0)
 | `amixer: Unable to find simple control 'PCM'` при старте | softvol создаёт контрол при первом открытии PCM (P-36) | `setup_pi.sh` делает `alsactl store`; вручную: `aplay -D softvol -d 1 … /dev/zero && sudo alsactl store` |
 | `apt: нет кандидата …` в setup_pi.sh | Индексы legacy.raspbian.org не скачались / часы до NTP | Повторить `just pi::setup-pi` (скрипт ждёт NTP 60 с) |
 | На tty1 квадраты вместо кириллицы | Консольный шрифт Lat15 (CODESET=guess) | `setup_pi.sh` шаг 10.5: CyrSlav Terminus 14x28 |
+| rootfs 100%, корень read-only, `/data` не смонтирован, omxplayer: `waiting for dbus address` | Поток ошибок ядра (22.10: `brcmfmac … HT Avail request error`, ~5/с) записан rsyslog в `syslog` + `kern.log` | `setup_pi.sh` шаг 10.6: rsyslog masked, journald volatile 16M. Сам поток — признак неисправности WiFi/питания платы |
+| RAM-слой overlayfs (`df /`) растёт, `free` падает | Что-то пишет в rootfs: 22.10 — `apt-daily` (62 MB кэша), `dphys-swapfile` (100 MB copy-up) | `setup_pi.sh`: таймеры apt/man-db masked, swap off. Искать: `find / -xdev -newermt "<время загрузки>" -size +1M` |
+| `journalctl` помнит лишь пару часов | Шумные логи (frame #N, вывод amixer) в лимите 16M | `MaxLevelStore=info`; frame-лог — LOG_DEBUG; stdout amixer → `/dev/null` |
 | WiFi не подключается при верном пароле | Сеть 5 GHz / WPA3 | Только 2.4 GHz WPA2; `ssid`/`psk` — в прямых кавычках |
 | `ssh -o BatchMode=yes` → Permission denied, хотя ключ принят | Ключ с passphrase не в ssh-agent | `ssh-add --apple-use-keychain ~/.ssh/id_ed25519` |
 | Звук пропал, aplay зависает без вывода | dmix IPC deadlock (P-34): aplay убит в момент удержания семафора | `sudo killall -9 aplay && ipcs -m | awk 'NR>3 && $3=="pi"' | xargs -r ipcrm -m && just pi::restart-audio` |

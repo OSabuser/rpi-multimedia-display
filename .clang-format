@@ -52,4 +52,4 @@ ReflowComments: false
 
 # --- Прочее ---
 InsertTrailingCommas: None
-Cpp11BracedListStyle: false
+Cpp11BracedListStyle: false 

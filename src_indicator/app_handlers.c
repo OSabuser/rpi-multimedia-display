@@ -221,7 +221,10 @@ void on_uart_frame(const mu_frame_t *p_frame, void *p_ctx)
         floor_t floor             = floor_decode(payload.left_char, payload.right_char);
         state_update_result_t upd = state_apply_frame(&p_app->state, &payload);
 
-        syslog(LOG_INFO,
+        /* LOG_DEBUG: фрейм приходит каждые ~2 с, журнал (16M в RAM) хранит только
+         * LOG_INFO и выше. Сводка по фреймам — в watchdog-строке каждые 30 с;
+         * поток фреймов для отладки — just pi::uart-dump. */
+        syslog(LOG_DEBUG,
                "frame #%u: floor=%d(%d) arrow=%d sound=%d mode=%d | "
                "changed: floor=%d arrow=%d mode=%d sound=%d first=%d dispatch_active=%d",
                g_s_stats.frames_ok, floor.number, (int) floor.type, (int) payload.arrow,

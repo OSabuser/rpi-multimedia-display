@@ -89,6 +89,22 @@ step "Отключение лишних сервисов"
 systemctl disable --now hciuart bluetooth               2>/dev/null || true
 systemctl disable --now serial-getty@ttyAMA0.service    2>/dev/null || true
 systemctl disable --now triggerhappy.service            2>/dev/null || true
+# swap-файл на SD изнашивает карту, а при overlayfs swapon на файле в overlay
+# невозможен («Недопустимый аргумент») → dphys-swapfile.service в failed.
+# Памяти хватает: ~135 MB available под видео 1080p (22.10.2026).
+if command -v dphys-swapfile &>/dev/null; then
+    dphys-swapfile swapoff   2>/dev/null || true
+    dphys-swapfile uninstall 2>/dev/null || true
+fi
+systemctl disable --now dphys-swapfile.service          2>/dev/null || true
+# Периодические apt/man-db при overlayfs пишут кэши в RAM-слой и не освобождают
+# до reboot: 22.10 apt-daily → pkgcache.bin + srcpkgcache.bin = 62 MB (overlay 1% → 34%).
+# Обновление ПО — только через just pi::update-start / deploy / update-finish.
+for t in apt-daily.timer apt-daily-upgrade.timer man-db.timer; do
+    systemctl disable --now "$t" 2>/dev/null || true
+    systemctl mask "$t"
+done
+rm -f /var/cache/apt/pkgcache.bin /var/cache/apt/srcpkgcache.bin
 ok "Unnecessary services disabled"
 
 # ─── 4. I2S overlay (hifiberry-dac) ──────────────────────────────────────────
@@ -439,6 +455,44 @@ VIDEOMODE=
 CONSOLE
 systemctl restart console-setup.service
 ok "Консоль: CyrSlav Terminus 14x28"
+
+# ─── 10.6. Логи: только journald в RAM с ротацией, rsyslog выключен ──────────
+#
+# 22.10.2026: поток ошибок brcmfmac (~5 строк/с) за ночь записал по 3 GB в
+# syslog и kern.log — rootfs заполнился, система ушла в read-only. С overlayfs
+# эти записи шли бы в tmpfs (RAM) без предела. Поэтому:
+# (размер /run при overlayfs — 10% RAM ≈ 37 MB: лимиты должны в него влезать)
+#   - rsyslog выключен — /var/log/{syslog,kern.log,…} больше не растут;
+#   - journald хранит журнал только в /run (Storage=volatile) и сам ротирует
+#     файлы: не больше RuntimeMaxUse всего, по RuntimeMaxFileSize на файл.
+# Читать логи: journalctl (just pi::logs, logs-tail).
+
+step "Логи: journald volatile с ротацией, rsyslog выключен"
+
+mkdir -p /etc/systemd/journald.conf.d
+cat > /etc/systemd/journald.conf.d/indicator.conf << 'JOURNALD'
+# Сгенерирован setup_pi.sh (шаг 10.6). Журнал только в RAM (/run), с ротацией.
+[Journal]
+Storage=volatile
+RuntimeMaxUse=16M
+RuntimeMaxFileSize=4M
+RuntimeKeepFree=8M
+# LOG_DEBUG (SIGCHLD, fast-update, frame #N) не храним: иначе 16M ≈ 2 часа истории
+MaxLevelStore=info
+ForwardToSyslog=no
+JOURNALD
+rm -rf /var/log/journal
+systemctl restart systemd-journald
+ok "journald: Storage=volatile, RuntimeMaxUse=16M, файлы по 4M, MaxLevelStore=info"
+
+systemctl disable --now rsyslog.service 2>/dev/null || true
+systemctl mask rsyslog.service
+# logrotate.d/rsyslog в postrotate шлёт сигнал rsyslog → при masked rsyslog
+# logrotate.service падает (failed). Удалённый conffile dpkg не восстанавливает.
+rm -f /etc/logrotate.d/rsyslog
+systemctl reset-failed logrotate.service 2>/dev/null || true
+find /var/log -type f -size +1M -exec truncate -s 0 {} +
+ok "rsyslog выключен и замаскирован; крупные файлы /var/log обнулены"
 
 # ─── 11. Маскировка getty@tty1 (для TUI при старте) ──────────────────────────
 
