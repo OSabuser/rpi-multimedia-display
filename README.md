@@ -36,7 +36,7 @@
 
 ### Прошивка нового устройства
 
-> ⚠️ Factory image для 2W (`indicator-hd-base-*.img.gz`) собирается в фазе F5 (конвейер готов, снимок эталонной платы — после её проверки). `indicator-base-v1.0.0*.img.gz` — образ для Pi Zero W (ARMv6, 600×1024), на 2W не использовать. Пошагово для производства — [`FLASHING_GUIDE.md`](docs/FLASHING_GUIDE.md).
+> Production-образ 2W: **`indicator-hd-base-20261023.img.gz`** (F5, прогон 3 суток в собранном индикаторе). `indicator-base-v1.0.0*.img.gz` — образ для Pi Zero W (ARMv6, 600×1024), на 2W не использовать. Пошагово для производства — [`FLASHING_GUIDE.md`](docs/FLASHING_GUIDE.md).
 
 ```bash
 # 1. Прошить factory image через balenaEtcher
@@ -267,9 +267,7 @@ gantt
     F2 FullHD renderer + fonts :done, f2, after f1, 7d
     F3 FullHD video + ingest   :done, f3, 2026-06-20, 4d
     F4 Audio + испытания       :done, f4, after f3, 2d
-
-    section В процессе
-    F5 Factory image           :active, f5, 2026-10-21, 3d
+    F5 Factory image           :done, f5, 2026-10-21, 5d
 
     section Далее
     F6 Trunk-унификация        :f6, after f5, 3d
@@ -282,7 +280,7 @@ gantt
 | F2 | ✅ | FullHD renderer, font renderer CalSans260, layout, рефакторинг main.c |
 | F3 | ✅ | 1080p video loop, media-ingest, температурный контроль |
 | F4 | ✅ | Испытания на объекте; P-36 закрыт, smoke 26/26 |
-| F5 | 🔄 | Конвейер образа готов (`just pi::prepare/cleanup/inspect/shrink-image`); снимок эталонной платы — впереди |
+| F5 | ✅ | Production-образ `indicator-hd-base-20261023.img.gz`; конвейер `just pi::prepare/backup/cleanup/inspect-image` |
 | F6 | ⏳ | Унификация `dev-pi` и `dev-pi2w` в один trunk |
 
 ---

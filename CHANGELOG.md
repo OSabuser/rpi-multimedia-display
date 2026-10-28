@@ -8,7 +8,9 @@
 ## [Unreleased] — ветка `dev-pi2w` (Lift Indicator HD, Pi Zero 2W)
 
 Целевое устройство: Raspberry Pi Zero 2W · Cortex-A53 (ARMv8-A 32-bit) · Debian Buster Lite armhf · 1080×1920.
-Фазы F0–F4 закрыты (см. `docs/plan/v_hd_phases/`, `docs/plan/MASTER_PLAN_HD.md`), F5 в работе.
+Фазы F0–F5 закрыты (см. `docs/plan/v_hd_phases/`, `docs/plan/MASTER_PLAN_HD.md`).
+
+Production-образ: `indicator-hd-base-20261023.img.gz` — прогон 23→26.10 в собранном индикаторе: 2 сут 21 ч без перезагрузок, 120852 фрейма без ошибок, 37–63 °C, throttled=0x0, overlay 1%, avail 239→220M (заполнение журнала), smoke 31/31.
 
 ### Added
 

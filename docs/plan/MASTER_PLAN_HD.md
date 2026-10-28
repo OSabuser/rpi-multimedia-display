@@ -1,6 +1,6 @@
 # Lift Indicator FullHD — Мастер-план (ветка `dev-pi2w`)
 
-> **Статус (2026-10-22):** Фазы F0–F4 — ЗАКРЫТЫ ✅ (F0–F3: отчёты в `docs/plan/v_hd_phases/`; F4: испытания на объекте + P-36). **F5** (factory image) — В РАБОТЕ: конвейер готов, эталонная плата пройдена до снимка (21.10), снимок отложен (плата повреждена при ночном прогоне — разбор у схемотехника). Базовый проект (ветка `dev-pi`, Фазы 0–7 + Deploy + Deploy v2) — ЗАКРЫТ ПОЛНОСТЬЮ.
+> **Статус (2026-10-26):** Фазы F0–F5 — ЗАКРЫТЫ ✅. Production-образ: `indicator-hd-base-20261023.img.gz` (прогон 23→26.10 в собранном индикаторе: 2 сут 21 ч без перезагрузок, 120852 фрейма без ошибок, 37–63 °C, throttled=0x0, overlay 1%, avail 239→220M (заполнение журнала), smoke 31/31). Следующая — **F6** (trunk-унификация). Базовый проект (ветка `dev-pi`, Фазы 0–7 + Deploy + Deploy v2) — ЗАКРЫТ ПОЛНОСТЬЮ.
 > **Стек:** C11 · DispmanX · omxplayer · ALSA · systemd · CMake · Docker · just *(без изменений)*
 > **Компилятор:** `zig cc` (`arm-zig-cc-a53` wrapper) — ARMv8-A 32-bit, cortex\_a53, hard-float
 > **Устройство:** Raspberry Pi Zero 2W · BCM2710A1 · 4× Cortex-A53 · Debian Buster Lite (armhf)
@@ -102,7 +102,7 @@ P-29 (ARROW slow path): на 4× A53 destroy+recreate, вероятно, ста�
 | F2 — FullHD renderer + font renderer | ✅ ЗАКРЫТА | `v_hd_phases/PHASE_F2_REPORT.md` |
 | F3 — FullHD video + media-ingest | ✅ ЗАКРЫТА | `v_hd_phases/PHASE_F3_REPORT.md` |
 | F4 — Audio + интеграционные испытания | ✅ ЗАКРЫТА | испытания на объекте; P-36 закрыт 21.10, smoke 26/26 |
-| F5 — Deploy v2 (factory image) | 🔄 В РАБОТЕ | конвейер `just pi::prepare/backup/cleanup/inspect-image`; см. `DEV_ARCH.md` §Golden image |
+| F5 — Deploy v2 (factory image) | ✅ ЗАКРЫТА | `indicator-hd-base-20261023.img.gz`; конвейер `just pi::prepare/backup/cleanup/inspect-image` (`DEV_ARCH.md` §Golden image) |
 | F6 — Trunk-унификация | ⏳ НЕ НАЧАТА | — |
 
 ### Фаза F0 — Ветки, toolchain, сборка *(devcontainer, без железа)*
@@ -229,20 +229,21 @@ P-29 (ARROW slow path): на 4× A53 destroy+recreate, вероятно, ста�
 
 ---
 
-## 7. Контекст для Фазы F5
+## 7. Контекст для Фазы F6
 
 При начале нового треда передать:
 
-1. Этот документ (`docs/plan/MASTER_PLAN_HD.md`)
-2. `docs/DEV_ARCH.md` §Golden image, `docs/SYSTEMD_FLOW.md`, `docs/FLASHING_GUIDE.md`
-3. `scripts/prepare_base_image.sh`, `setup_pi.sh`, `first_boot.sh`, `cleanup_image.sh`, `just/pi.just` (группа `image`)
+1. Этот документ (`docs/plan/MASTER_PLAN_HD.md`, §4 «Фаза F6»)
+2. `git diff dev-pi dev-pi2w --stat`, `CHANGELOG.md` (раздел `[Unreleased]`)
+3. `just/build.just`, `just/pi.just`, `platform/dispmanx/renderer_impl.c`
 
-**Состояние на 2026-10-22:** на эталонной плате пройдены prepare → setup-pi → deploy-full → smoke 26/26 →
-check-resources → UART с MCU (`setup: status=ok`). Не сделано: push через `pi_nku_menu`, ночной прогон,
-снимок (`backup-image` → `cleanup-image` → `inspect-image`), проверка заводского сценария на чистой карте.
+**Итоги F5:** production-образ `indicator-hd-base-20261023.img.gz` собран одним проходом
+`prepare-image → setup-pi → deploy-full`, снят с эталона, проверен заводским сценарием и прогоном 3 суток.
+Открытые замечания: температура в закрытом корпусе до 63 °C (запас до ограничения частоты при 80 °C ~17 °C —
+проверить при летней температуре в шахте); MCU дублирует фреймы ASCII-строкой (прошивка STM32).
 
 **Стартовая фраза:**
-> Продолжаем F5 ветки dev-pi2w: эталонная плата → снимок → factory image → проверка по FLASHING_GUIDE.
+> F0–F5 ветки dev-pi2w закрыты. Начинаем F6 — один `main` для Zero W и Zero 2W.
 
 ---
 
